@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0F2A43">
+  <meta name="theme-color" content="#272350">
   <meta name="description" content="천 권의 책을 지식의 계보로 배열하고, 답 대신 질문으로 입장하는 독서 대시보드">
   <title>천책빵</title>
   <link rel="manifest" href="manifest.webmanifest">
@@ -16,6 +16,7 @@
     <header class="topbar">
       <h1 class="brand">천책빵</h1>
       <p class="brand-sub">뿌리를 찾는 서재</p>
+      <button id="profile-btn" class="profile-btn" data-open-profile="1">로그인</button>
     </header>
 
     <main id="view" class="view" tabindex="-1"></main>
@@ -23,7 +24,7 @@
     <nav class="tabbar" aria-label="주요 화면">
       <button class="tab" data-tab="question" aria-current="page">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.2 4.1 2.6 5.2.8.7 1.4 1.6 1.4 2.6h6c0-1 .6-1.9 1.4-2.6C17.8 14.1 19 12.4 19 10a7 7 0 0 0-7-7Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-        <span>질문</span>
+        <span>홈</span>
       </button>
       <button class="tab" data-tab="lineage">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7" cy="13" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="17" cy="13" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="20" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M11 6.8 8 11m8-4.2L13 11m-4.6 3.6L10.5 19m5.5-4.4L13.5 19" stroke="currentColor" stroke-width="1.5"/></svg>

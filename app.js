@@ -41,11 +41,12 @@ function loadState() {
       return {
         read: s.read || [], reading: s.reading || [],
         questions: s.questions || [], rootArrivals: s.rootArrivals || 0,
-        journey: s.journey || null, journeysDone: s.journeysDone || []
+        journey: s.journey || null, journeysDone: s.journeysDone || [],
+        profile: s.profile || null
       };
     }
   } catch { /* 손상 시 초기화 */ }
-  return { read: [], reading: [], questions: [], rootArrivals: 0, journey: null, journeysDone: [] };
+  return { read: [], reading: [], questions: [], rootArrivals: 0, journey: null, journeysDone: [], profile: null };
 }
 const state = loadState();
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
@@ -121,9 +122,20 @@ document.getElementById("exit-stay").addEventListener("click", () => {
   hideExit();
   history.forward(); // 센티널에서 기본 화면으로 복귀
 });
+// [닫기] 결정적 폴백 (PRD F8): ① 창 닫기 시도 ② 차단되면 닫힘 화면 — 어떤 환경에서도 무반응 금지
 document.getElementById("exit-leave").addEventListener("click", () => {
-  history.back();    // 센티널 이전 = 앱 이탈
-  setTimeout(() => window.close(), 200);
+  window.close();
+  setTimeout(() => {
+    document.body.innerHTML = `
+      <div class="goodbye">
+        <div class="goodbye-box">
+          <p class="t">천책빵을 닫았습니다.</p>
+          <p class="d">이 탭은 닫으셔도 됩니다. 오늘의 질문은 내일 새로 도착합니다.</p>
+          <button class="btn btn-light" data-reopen="1">다시 열기</button>
+        </div>
+      </div>`;
+    document.querySelector("[data-reopen]").addEventListener("click", () => location.reload());
+  }, 120);
 });
 
 /* ── 렌더 공통 ─────────────────────────────────────── */
@@ -159,23 +171,41 @@ function renderQuestion() {
   const collected = state.questions.some((x) => x.id === item.id);
   const j = state.journey ? JOURNEYS.find((x) => x.id === state.journey.id) : null;
   const readingNow = state.reading.map((id) => BY_ID.get(id)).filter(Boolean);
+  const lastQ = state.questions[state.questions.length - 1];
+  const lastQBook = lastQ ? BY_ID.get(lastQ.bookId) : null;
+  const lastQObj = lastQBook ? lastQBook.questions[Number(lastQ.id.split("#")[1])] : null;
 
   let journeyHtml;
   if (j) {
+    const done = state.journey.doneBookIds.length, total = j.bookIds.length;
     journeyHtml = `
       <button class="card card-tap" data-open-jdetail="1">
-        <div class="card-meta">${esc(j.domain)} 여정 진행 중 · ${state.journey.doneBookIds.length}/${j.bookIds.length}권</div>
+        <div class="card-meta">${esc(j.domain)} 여정 진행 중 · ${done}/${total}권</div>
         <div class="card-title" style="font-family:var(--serif)">${esc(j.question.text)}</div>
+        <div class="jprogress" aria-hidden="true"><i style="width:${Math.round((done / total) * 100)}%"></i></div>
       </button>`;
   } else {
     journeyHtml = `
       <button class="card card-tap" data-open-jlist="1">
         <div class="card-title">여정 시작하기</div>
-        <div class="card-meta">하나의 질문을 골라 뿌리에서 가지까지 읽어갑니다</div>
+        <div class="card-meta">하나의 질문을 골라 뿌리에서 가지까지 읽어갑니다 · ${state.journeysDone.length}/${JOURNEYS.length} 완료</div>
       </button>`;
   }
 
+  const gaugeRows = DOMAINS.map((d) => {
+    const books = ALL.filter((x) => x.domain === d);
+    const done = books.filter((x) => state.read.includes(x.id)).length;
+    const pct = books.length ? Math.round((done / books.length) * 100) : 0;
+    return `
+      <div class="gauge-row">
+        <span class="name">${esc(d)}</span>
+        <span class="bar"><i style="width:${pct}%"></i></span>
+        <span class="num">${done}/${books.length}</span>
+      </div>`;
+  }).join("");
+
   viewEl.innerHTML = `
+    ${state.profile ? `<p class="greeting">${esc(state.profile.name)}님의 서재 계기판</p>` : ""}
     <section aria-label="오늘의 질문">
       <div class="q-card">
         <p class="q-kicker">오늘의 질문</p>
@@ -190,16 +220,26 @@ function renderQuestion() {
       <p class="q-hint">질문에서 시작해 뿌리 고전까지 내려가는 서재입니다.</p>
     </section>
 
+    <p class="section-label">탐구 계기판</p>
+    <div class="stats">
+      <div class="stat"><b>${state.read.length}<small> /${ALL.length}</small></b><span>읽은 책</span><span class="lamp"></span></div>
+      <div class="stat"><b>${state.questions.length}</b><span>수집한 질문</span><span class="lamp"></span></div>
+      <div class="stat"><b>${state.rootArrivals}</b><span>뿌리 도달</span><span class="lamp"></span></div>
+      <div class="stat"><b>${state.journeysDone.length}<small> /${JOURNEYS.length}</small></b><span>여정 완료</span><span class="lamp"></span></div>
+    </div>
+
+    <p class="section-label">분야별 계보 진행</p>
+    <div class="gauge">${gaugeRows}</div>
+
     <p class="section-label">질문 여정</p>
     ${journeyHtml}
     ${readingNow.length ? `<p class="section-label">지금 읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true })).join("") : ""}
-
-    <p class="section-label">나의 탐구</p>
-    <div class="stats">
-      <div class="stat"><b>${state.read.length}</b><span>읽은 책</span></div>
-      <div class="stat"><b>${state.questions.length}</b><span>수집한 질문</span></div>
-      <div class="stat"><b>${state.rootArrivals}</b><span>뿌리 도달</span></div>
-    </div>`;
+    ${lastQObj ? `
+      <p class="section-label">최근 수집한 질문</p>
+      <button class="card card-tap" data-tab="record">
+        <div class="card-title" style="font-family:var(--serif)">${esc(lastQObj.text)}</div>
+        <div class="card-meta">${esc(lastQBook.author)}, ${esc(lastQObj.source)} · 기록에서 나의 답 적기</div>
+      </button>` : ""}`;
 }
 
 /* ── 탭: 계보 ─────────────────────────────────────── */
@@ -433,6 +473,28 @@ function renderJourneyDetail() {
   overlayRoot.querySelector(".sheet").focus();
 }
 
+/* ── 오버레이: 프로필 로그인 (F9, 로컬 전용) ────────── */
+function renderProfile() {
+  const p = state.profile;
+  overlayRoot.innerHTML = `
+    <div class="sheet-backdrop" data-close-overlay="1">
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="프로필" tabindex="-1">
+        <div class="sheet-handle"></div>
+        <h2>${p ? esc(p.name) + "님" : "로그인"}</h2>
+        <p class="meta">${p ? "이 기기의 서재에 로그인되어 있습니다" : "이름으로 나의 서재를 시작합니다"}</p>
+        <input class="profile-input" id="profile-name" type="text" maxlength="20"
+          placeholder="이름 또는 별명" value="${p ? esc(p.name) : ""}" aria-label="이름">
+        <p class="profile-note">기록은 이 기기에만 보관됩니다. 계정 연동과 기기 간 동기화는 다음 버전에서 제공합니다.</p>
+        <div class="sheet-actions">
+          <button class="btn btn-primary" data-login="1">${p ? "이름 변경" : "로그인"}</button>
+          ${p ? `<button class="btn btn-ghost" data-logout="1">로그아웃</button>` : ""}
+        </div>
+        <p id="profile-alert" role="alert" hidden>이름을 입력해 주세요.</p>
+      </div>
+    </div>`;
+  overlayRoot.querySelector(".sheet").focus();
+}
+
 /* ── 전체 렌더 ─────────────────────────────────────── */
 function render() {
   const v = top();
@@ -450,14 +512,32 @@ function render() {
   else if (v.overlay.type === "trail") renderTrail(v.overlay.bookId);
   else if (v.overlay.type === "jlist") renderJourneyList();
   else if (v.overlay.type === "jdetail") renderJourneyDetail();
+  else if (v.overlay.type === "profile") renderProfile();
+
+  const pb = document.getElementById("profile-btn");
+  pb.textContent = state.profile ? `${state.profile.name}님` : "로그인";
 }
 
 /* ── 이벤트 위임 ───────────────────────────────────── */
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-close-overlay]");
+  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-login],[data-logout],[data-close-overlay]");
   if (!t) return;
 
-  if (t.dataset.tab) {
+  if (t.dataset.openProfile) {
+    pushView({ tab: top().tab, overlay: { type: "profile" } });
+  } else if (t.dataset.login) {
+    const input = document.getElementById("profile-name");
+    const name = input.value.trim();
+    const alertEl = document.getElementById("profile-alert");
+    if (!name) { alertEl.hidden = false; input.focus(); return; }
+    state.profile = { name };
+    save();
+    history.back(); // 프로필 시트 닫기
+  } else if (t.dataset.logout) {
+    state.profile = null;
+    save();
+    history.back();
+  } else if (t.dataset.tab) {
     const cur = top();
     if (cur.tab === t.dataset.tab && !cur.overlay) return;
     pushView({ tab: t.dataset.tab, overlay: null });
