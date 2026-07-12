@@ -1,0 +1,17 @@
+{
+  "name": "천책빵 — 뿌리를 찾는 서재",
+  "short_name": "천책빵",
+  "description": "천 권의 책을 지식의 계보로 배열하고, 답 대신 질문으로 입장하는 독서 대시보드",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAFAF8",
+  "theme_color": "#0F2A43",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

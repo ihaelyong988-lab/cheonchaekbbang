@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0F2A43">
+  <meta name="description" content="천 권의 책을 지식의 계보로 배열하고, 답 대신 질문으로 입장하는 독서 대시보드">
+  <title>천책빵</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <h1 class="brand">천책빵</h1>
+      <p class="brand-sub">뿌리를 찾는 서재</p>
+    </header>
+
+    <main id="view" class="view" tabindex="-1"></main>
+
+    <nav class="tabbar" aria-label="주요 화면">
+      <button class="tab" data-tab="question" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.2 4.1 2.6 5.2.8.7 1.4 1.6 1.4 2.6h6c0-1 .6-1.9 1.4-2.6C17.8 14.1 19 12.4 19 10a7 7 0 0 0-7-7Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 21h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        <span>질문</span>
+      </button>
+      <button class="tab" data-tab="lineage">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7" cy="13" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="17" cy="13" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="20" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M11 6.8 8 11m8-4.2L13 11m-4.6 3.6L10.5 19m5.5-4.4L13.5 19" stroke="currentColor" stroke-width="1.5"/></svg>
+        <span>계보</span>
+      </button>
+      <button class="tab" data-tab="library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h3v16H5zM10 4h3v16h-3zM15.5 4.6l2.9-.6 3 15.7-2.9.6z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span>서재</span>
+      </button>
+      <button class="tab" data-tab="record">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-3.5L6 21z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        <span>기록</span>
+      </button>
+    </nav>
+
+    <div id="overlay-root"></div>
+
+    <div id="exit-dialog" class="exit-backdrop" hidden>
+      <div class="exit-box" role="dialog" aria-modal="true" aria-labelledby="exit-title">
+        <p id="exit-title" class="exit-title">천책빵을 닫으시겠습니까?</p>
+        <p class="exit-desc">오늘의 질문은 내일 새로 도착합니다.</p>
+        <div class="exit-actions">
+          <button id="exit-stay" class="btn btn-primary">계속 읽기</button>
+          <button id="exit-leave" class="btn btn-ghost">닫기</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
