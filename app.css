@@ -76,27 +76,27 @@ body {
   margin: 22px 2px 8px;
 }
 .section-label:first-child { margin-top: 0; }
-.greeting { font-size: 13.5px; color: var(--muted); margin: 0 2px 10px; }
 
-/* 오늘의 질문 — 은회 카드에 먹색 세리프 */
+/* 오늘의 질문 — 맨몸의 질문, 최소 높이 */
 .q-card {
   background: var(--silver);
   color: var(--ink);
   border: 1px solid var(--silver-line);
   border-radius: 10px;
-  padding: 24px 22px 18px;
+  padding: 18px 18px 12px;
+  margin-bottom: 14px;
 }
-.q-kicker { font-size: 12px; color: var(--bronze); letter-spacing: 0.08em; margin-bottom: 10px; font-weight: 700; }
 .q-text {
   font-family: var(--serif);
-  font-size: 22px;
-  line-height: 1.5;
+  font-size: 20px;
+  line-height: 1.45;
   font-weight: 600;
   word-break: keep-all;
 }
+.q-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+/* 상세 화면(여정 등) 전용 보조 텍스트 — 홈 히어로에는 사용 금지 */
+.q-kicker { font-size: 12px; color: var(--bronze); letter-spacing: 0.08em; margin-bottom: 10px; font-weight: 700; }
 .q-source { font-size: 13px; color: var(--muted); margin-top: 12px; }
-.q-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-.q-hint { font-size: 13px; color: var(--muted); margin: 10px 2px 0; }
 
 /* 버튼 */
 .btn {

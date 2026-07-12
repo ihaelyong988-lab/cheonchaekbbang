@@ -188,7 +188,7 @@ function renderQuestion() {
     journeyHtml = `
       <button class="card card-tap" data-open-jlist="1">
         <div class="card-title">여정 시작하기</div>
-        <div class="card-meta">하나의 질문을 골라 뿌리에서 가지까지 읽어갑니다 · ${state.journeysDone.length}/${JOURNEYS.length} 완료</div>
+        <div class="card-meta">${state.journeysDone.length}/${JOURNEYS.length} 완료</div>
       </button>`;
   }
 
@@ -205,22 +205,17 @@ function renderQuestion() {
   }).join("");
 
   viewEl.innerHTML = `
-    ${state.profile ? `<p class="greeting">${esc(state.profile.name)}님의 서재 계기판</p>` : ""}
     <section aria-label="오늘의 질문">
       <div class="q-card">
-        <p class="q-kicker">오늘의 질문</p>
         <p class="q-text">${esc(item.q.text)}</p>
-        <p class="q-source">${esc(b.author)}, ${esc(item.q.source)}</p>
         <div class="q-actions">
-          <button class="btn btn-light" data-open-book="${b.id}">이 질문을 다루는 책 보기</button>
-          <button class="btn btn-outline" data-collect="${item.id}" ${collected ? "disabled" : ""}>${collected ? "수집됨" : "질문 수집"}</button>
+          <button class="btn btn-light" data-open-book="${b.id}">이 질문의 책</button>
+          <button class="btn btn-outline" data-collect="${item.id}" ${collected ? "disabled" : ""}>${collected ? "수집됨" : "수집"}</button>
+          <button class="btn-quiet" data-shuffle="1">다른 질문</button>
         </div>
       </div>
-      <button class="btn-quiet" data-shuffle="1">다른 질문</button>
-      <p class="q-hint">질문에서 시작해 뿌리 고전까지 내려가는 서재입니다.</p>
     </section>
 
-    <p class="section-label">탐구 계기판</p>
     <div class="stats">
       <div class="stat"><b>${state.read.length}<small> /${ALL.length}</small></b><span>읽은 책</span><span class="lamp"></span></div>
       <div class="stat"><b>${state.questions.length}</b><span>수집한 질문</span><span class="lamp"></span></div>
@@ -228,17 +223,16 @@ function renderQuestion() {
       <div class="stat"><b>${state.journeysDone.length}<small> /${JOURNEYS.length}</small></b><span>여정 완료</span><span class="lamp"></span></div>
     </div>
 
-    <p class="section-label">분야별 계보 진행</p>
+    <p class="section-label">분야별 진행</p>
     <div class="gauge">${gaugeRows}</div>
 
     <p class="section-label">질문 여정</p>
     ${journeyHtml}
-    ${readingNow.length ? `<p class="section-label">지금 읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true })).join("") : ""}
+    ${readingNow.length ? `<p class="section-label">읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true })).join("") : ""}
     ${lastQObj ? `
-      <p class="section-label">최근 수집한 질문</p>
+      <p class="section-label">최근 질문</p>
       <button class="card card-tap" data-tab="record">
         <div class="card-title" style="font-family:var(--serif)">${esc(lastQObj.text)}</div>
-        <div class="card-meta">${esc(lastQBook.author)}, ${esc(lastQObj.source)} · 기록에서 나의 답 적기</div>
       </button>` : ""}`;
 }
 
