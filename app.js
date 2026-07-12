@@ -204,24 +204,25 @@ function renderQuestion() {
       </div>`;
   }).join("");
 
+  const qLen = item.q.text.length; // 2줄 고정 — 길이에 따라 글자만 압축, 박스 높이 불변
+  const qSize = qLen <= 22 ? "" : qLen <= 29 ? " q-mid" : " q-long";
   viewEl.innerHTML = `
     <section aria-label="오늘의 질문">
       <div class="q-card">
-        <p class="q-text">${esc(item.q.text)}</p>
+        <p class="q-text${qSize}"><span>${esc(item.q.text)}</span></p>
         <div class="q-actions">
           <button class="btn btn-light" data-open-book="${b.id}">이 질문의 책</button>
           <button class="btn btn-outline" data-collect="${item.id}" ${collected ? "disabled" : ""}>${collected ? "수집됨" : "수집"}</button>
           <button class="btn-quiet" data-shuffle="1">다른 질문</button>
         </div>
+        <div class="q-stats" role="group" aria-label="나의 기록">
+          <button class="qstat" data-tab="record"><b>${state.read.length}<small>/${ALL.length}</small></b><span>읽은 책</span></button>
+          <button class="qstat" data-tab="record"><b>${state.questions.length}</b><span>수집한 질문</span></button>
+          <button class="qstat" data-tab="lineage"><b>${state.rootArrivals}</b><span>뿌리 도달</span></button>
+          <button class="qstat" data-open-jlist="1"><b>${state.journeysDone.length}<small>/${JOURNEYS.length}</small></b><span>여정 완료</span></button>
+        </div>
       </div>
     </section>
-
-    <div class="stats">
-      <div class="stat"><b>${state.read.length}<small> /${ALL.length}</small></b><span>읽은 책</span><span class="lamp"></span></div>
-      <div class="stat"><b>${state.questions.length}</b><span>수집한 질문</span><span class="lamp"></span></div>
-      <div class="stat"><b>${state.rootArrivals}</b><span>뿌리 도달</span><span class="lamp"></span></div>
-      <div class="stat"><b>${state.journeysDone.length}<small> /${JOURNEYS.length}</small></b><span>여정 완료</span><span class="lamp"></span></div>
-    </div>
 
     <p class="section-label">분야별 진행</p>
     <div class="gauge">${gaugeRows}</div>

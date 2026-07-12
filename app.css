@@ -77,23 +77,62 @@ body {
 }
 .section-label:first-child { margin-top: 0; }
 
-/* 오늘의 질문 — 맨몸의 질문, 최소 높이 */
+/* 오늘의 질문 — 맨몸의 질문, 2줄 고정(신축 금지) */
 .q-card {
   background: var(--silver);
   color: var(--ink);
   border: 1px solid var(--silver-line);
   border-radius: 10px;
-  padding: 18px 18px 12px;
+  padding: 14px 16px 0;
   margin-bottom: 14px;
 }
 .q-text {
   font-family: var(--serif);
   font-size: 20px;
-  line-height: 1.45;
+  line-height: 1.4;
   font-weight: 600;
   word-break: keep-all;
+  height: 58px;              /* 2줄 고정 — 문장 길이와 무관하게 박스 높이 불변 */
+  display: flex;
+  align-items: center;
 }
-.q-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.q-text span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.q-text.q-mid { font-size: 17.5px; }   /* 23~29자: 압축 1단 */
+.q-text.q-long { font-size: 15.5px; }  /* 30자~: 압축 2단 */
+.q-actions { display: flex; gap: 8px; margin: 8px 0 10px; flex-wrap: wrap; align-items: center; }
+
+/* 수치 4개 — 박스 하단 가로 스트립, 각 탭으로 연결 */
+.q-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--silver-line);
+  margin: 0 -16px;
+}
+.qstat {
+  font-family: var(--sans);
+  background: none;
+  border: 0;
+  border-left: 1px solid var(--silver-line);
+  min-height: 48px;
+  padding: 7px 2px 8px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.qstat:first-child { border-left: 0; }
+.qstat:focus-visible { outline: 2px solid var(--bronze); outline-offset: -2px; }
+.qstat b {
+  display: block;
+  font-size: 17px;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.qstat b small { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.qstat span { display: block; font-size: 10.5px; color: var(--muted); letter-spacing: 0.02em; }
 /* 상세 화면(여정 등) 전용 보조 텍스트 — 홈 히어로에는 사용 금지 */
 .q-kicker { font-size: 12px; color: var(--bronze); letter-spacing: 0.08em; margin-bottom: 10px; font-weight: 700; }
 .q-source { font-size: 13px; color: var(--muted); margin-top: 12px; }
@@ -153,25 +192,12 @@ body {
 .badge-read { background: #E4E8D8; color: #3F5220; }
 .badge-reading { background: #F3E9D2; color: #7A4E10; }
 
-/* ── 계기판 (홈 대시보드) ───────────── */
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.stat {
-  background: var(--card); border: 1px solid var(--line);
-  border-radius: 10px; padding: 13px 10px 11px; text-align: center;
-}
-.stat b {
-  display: block; font-size: 23px; font-variant-numeric: tabular-nums;
-  color: var(--ink); line-height: 1.3;
-}
-.stat b small { font-size: 13px; font-weight: 600; color: var(--muted); }
-.stat span { font-size: 12px; color: var(--muted); }
-.stat .lamp { display: block; width: 22px; height: 3px; background: var(--amber); border-radius: 2px; margin: 6px auto 0; }
-
+/* ── 분야별 진행 (홈 대시보드) ───────────── */
 .gauge { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .gauge-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 .gauge-row .name { flex: 0 0 66px; font-size: 13px; color: var(--ink); }
-.gauge-row .bar { flex: 1; height: 8px; border-radius: 4px; background: #ECECE3; overflow: hidden; }
-.gauge-row .bar i { display: block; height: 100%; background: var(--amber); border-radius: 4px; }
+.gauge-row .bar { flex: 1; height: 8px; border-radius: 4px; background: #F1F1EA; overflow: hidden; }
+.gauge-row .bar i { display: block; height: 100%; background: #E7D6B8; border-radius: 4px; } /* 아주 옅은 등불색 */
 .gauge-row .num { flex: 0 0 44px; text-align: right; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .jprogress { height: 8px; border-radius: 4px; background: #ECECE3; overflow: hidden; margin-top: 10px; }
