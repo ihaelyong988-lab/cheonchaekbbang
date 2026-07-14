@@ -1,9 +1,11 @@
-// 천책빵 시드 데이터 — 60권 (뿌리 20 · 줄기 20 · 가지 20), 동서양 균형
-// 정식 천 권 리스트 도착 시 이 파일만 교체한다. 스키마: PRD-천책빵.md §5
+// 천책빵 핵심 계보 60권 + 리서치 실측 목록 신규 59권.
+// 중복 7권은 기존 id에 리서치 근거만 결합해 로컬 기록을 보존한다.
+
+import { RESEARCH_BOOKS, RESEARCH_BY_BOOK_ID } from "./research-books.js";
 
 export const DOMAINS = ["철학", "역사", "과학", "문학", "경제·사회", "예술"];
 
-export const BOOKS = [
+const CORE_BOOKS = [
   // ── 철학 (뿌리 4 · 줄기 3 · 가지 3) ─────────────────────────
   {
     id: "lunyu", title: "논어", author: "공자", era: "BC 5세기", domain: "철학", tier: "root",
@@ -377,6 +379,13 @@ export const BOOKS = [
   }
 ];
 
+export const BOOKS = [
+  ...CORE_BOOKS.map((book) => RESEARCH_BY_BOOK_ID[book.id]
+    ? { ...book, research: RESEARCH_BY_BOOK_ID[book.id] }
+    : book),
+  ...RESEARCH_BOOKS,
+];
+
 // 질문 여정 6코스 — 분야당 1개, 뿌리→줄기→가지 순
 export const JOURNEYS = [
   {
@@ -411,4 +420,4 @@ export const JOURNEYS = [
   }
 ];
 
-export const IS_SEED = true; // 정식 천 권 리스트 교체 시 false
+export const IS_SEED = false;
