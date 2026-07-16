@@ -11,7 +11,7 @@ const assets = {
   "data/celeb-books-2025.js": "verified-correction",
   "lib/search.js": "createQuestionSearch",
   "manifest.webmanifest": '"standalone"',
-  "sw.js": "ccb-v1.7.0",
+  "sw.js": "ccb-v1.7.1",
 };
 
 for (const [asset, marker] of Object.entries(assets)) {
@@ -53,6 +53,24 @@ try {
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
     await page.reload({ waitUntil: "networkidle" });
     assert.equal(await page.locator('.tab[aria-current="page"] span').textContent(), "홈", `${width}px: 홈 첫 화면 아님`);
+    assert.equal(await page.title(), "천책빵 — 뿌리를 찾는 서재", `${width}px: 브라우저 제목 불일치`);
+    assert.deepEqual(await page.evaluate(async () => {
+      const meta = (selector) => document.querySelector(selector)?.content;
+      const manifest = await fetch(new URL("./manifest.webmanifest", location.href)).then((response) => response.json());
+      return {
+        applicationName: meta('meta[name="application-name"]'),
+        appleTitle: meta('meta[name="apple-mobile-web-app-title"]'),
+        ogSiteName: meta('meta[property="og:site_name"]'),
+        manifestName: manifest.name,
+        manifestShortName: manifest.short_name,
+      };
+    }), {
+      applicationName: "천책빵",
+      appleTitle: "천책빵",
+      ogSiteName: "천책빵",
+      manifestName: "천책빵 — 뿌리를 찾는 서재",
+      manifestShortName: "천책빵",
+    }, `${width}px: 사이트 이름 메타데이터 불일치`);
     assert.equal(await page.locator(".tab").count(), 4, `${width}px: 4탭 누락`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `${width}px: 가로 넘침`);
     assert.deepEqual(await page.evaluate(async () => {
@@ -64,7 +82,7 @@ try {
       await page.locator("#question-search").fill("돈과 투자는 어떻게 판단해야 하는가");
       await page.locator("#question-search-form").evaluate((form) => form.requestSubmit());
       assert.ok(await page.getByText("현명한 투자자", { exact: true }).count() > 0, "운영 질문 검색 실패");
-      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.7.0"), "운영 SW 캐시 버전 불일치");
+      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.7.1"), "운영 SW 캐시 버전 불일치");
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
       assert.equal(await page.locator('.tab[aria-current="page"] span').textContent(), "홈", "운영 오프라인 reload 실패");
@@ -85,6 +103,7 @@ console.log(JSON.stringify({
   viewports: verifiedViewports,
   books: 175,
   questions: 590,
-  cache: "ccb-v1.7.0",
+  siteName: "천책빵",
+  cache: "ccb-v1.7.1",
   offline: true,
 }, null, 2));
