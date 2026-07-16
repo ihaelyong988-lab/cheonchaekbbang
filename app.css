@@ -1,7 +1,8 @@
 /* 천책빵 — 지혜의 색(은회): Silver #E4E4DF · Paper #F5F5F1 · Ink #26282A · Charcoal #3A3C39 · Bronze #8F5A0E · Amber #B4832F */
 :root {
-  --silver: #E4E4DF;      /* 주 표면: 헤더·오늘의 질문·뿌리 카드 (먹색 글자) */
+  --silver: #E4E4DF;      /* 주 표면: 헤더·뿌리 카드 (먹색 글자) */
   --silver-line: #D2D2C9; /* 은회 표면 경계 */
+  --hero-surface: #D6D6CF; /* 질문 히어로: 기본 은회보다 한 단계 짙은 표면 */
   --ink: #26282A;         /* 먹색 본문 */
   --paper: #F5F5F1;       /* 배경 회백 */
   --charcoal: #3A3C39;    /* 주 행동 버튼 (백색 텍스트 9:1) */
@@ -18,6 +19,7 @@
 html[data-theme="navy"] {
   --silver: #0F2A43;
   --silver-line: #36536C;
+  --hero-surface: #173A55;
   --ink: #F5F2EA;
   --paper: #10263A;
   --charcoal: #2456A6;
@@ -107,7 +109,7 @@ body {
 
 /* 오늘의 질문 — 맨몸의 질문, 2줄 고정(신축 금지) */
 .q-card {
-  background: var(--silver);
+  background: var(--hero-surface);
   color: var(--ink);
   border: 1px solid var(--silver-line);
   border-radius: 10px;
