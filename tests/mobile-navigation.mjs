@@ -90,6 +90,8 @@ try {
   assert.equal(await page.locator("#exit-dialog").isVisible(), false);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
   assert.equal(await page.evaluate(() => Boolean(navigator.serviceWorker.controller)), true);
+  assert.equal(await page.locator(".q-card").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(214, 214, 207)");
+  assert.equal(await page.locator(".topbar").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(228, 228, 223)");
   assert.deepEqual(await page.locator("button").evaluateAll((buttons) => buttons
     .filter((button) => {
       const rect = button.getBoundingClientRect();
@@ -147,6 +149,8 @@ try {
 
   await page.locator("#theme-btn").click();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "navy");
+  assert.equal(await page.locator(".q-card").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(23, 58, 85)");
+  assert.equal(await page.locator(".topbar").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(15, 42, 67)");
   await page.reload({ waitUntil: "networkidle" });
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "navy");
   assert.equal(await page.locator("#theme-btn").textContent(), "은회");
