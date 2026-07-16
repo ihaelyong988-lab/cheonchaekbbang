@@ -292,7 +292,7 @@ body {
 .book-q .src { font-size: 12px; color: var(--muted); display: block; margin-top: 2px; }
 .sheet-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 
-/* 프로필 (로그인) */
+/* 내 서재 (로컬 프로필) */
 .profile-input {
   width: 100%; min-height: 44px; font-family: var(--sans); font-size: 15px;
   padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px;
@@ -343,7 +343,6 @@ body {
   border-radius: 12px; padding: 22px 20px 18px;
 }
 .exit-title { font-size: 16.5px; font-weight: 700; word-break: keep-all; }
-.exit-desc { font-size: 13.5px; color: var(--muted); margin-top: 6px; word-break: keep-all; }
 .exit-actions { display: flex; gap: 8px; margin-top: 16px; }
 .exit-actions .btn { flex: 1; }
 

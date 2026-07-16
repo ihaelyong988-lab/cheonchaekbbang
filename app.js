@@ -1,4 +1,4 @@
-// 천책빵 — 뿌리를 찾는 서재 (PRD-천책빵.md v1.0)
+// 천책빵 — 뿌리를 찾는 서재 (PRD-천책빵.md v1.5)
 import { BOOKS, JOURNEYS, DOMAINS, IS_SEED } from "./data/books.js";
 
 /* ── 데이터 무결성 검증 (PRD §5) ───────────────────── */
@@ -88,6 +88,11 @@ let stack = [{ tab: "question", overlay: null }];
 const HASH = { question: "#question", lineage: "#lineage", library: "#library", record: "#record" };
 history.replaceState({ i: -1 }, "");                 // 종료 트랩(센티널)
 history.pushState({ i: 0 }, "", HASH.question);      // 기본 화면
+const exitEl = document.getElementById("exit-dialog");
+const exitBackground = [".topbar", "#view", ".tabbar", "#overlay-root"]
+  .map((selector) => document.querySelector(selector));
+let exitReturnInProgress = false;
+let lastFocus = null;
 
 function pushView(view) {
   stack.push(view);
@@ -98,30 +103,74 @@ function top() { return stack[stack.length - 1]; }
 
 window.addEventListener("popstate", (e) => {
   const i = e.state && typeof e.state.i === "number" ? e.state.i : -1;
-  if (i < 0) { showExit(); return; }                 // 맨 첫 화면에서 뒤로가기
+  if (i < 0) {
+    exitReturnInProgress = true;
+    showExit();
+    history.forward();                                // 팝업 중 반복 뒤로가기로 앱을 벗어나지 않게 복귀
+    return;
+  }
+  if (exitReturnInProgress && i === 0) {
+    exitReturnInProgress = false;
+    if (!exitEl.hidden) return;
+  }
   hideExit();
   stack = stack.slice(0, i + 1);
   if (stack.length === 0) stack = [{ tab: "question", overlay: null }];
   render();
 });
 
-const exitEl = document.getElementById("exit-dialog");
-let lastFocus = null;
+function setExitBackgroundInert(inert) {
+  for (const el of exitBackground) {
+    el.inert = inert;
+    if (inert) el.setAttribute("aria-hidden", "true");
+    else el.removeAttribute("aria-hidden");
+  }
+}
+
 function showExit() {
+  if (!exitEl.hidden) return;
   lastFocus = document.activeElement;
   exitEl.hidden = false;
   document.getElementById("exit-stay").focus();
+  setExitBackgroundInert(true);
 }
 function hideExit() {
   if (!exitEl.hidden) {
+    setExitBackgroundInert(false);
     exitEl.hidden = true;
     if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
 }
-document.getElementById("exit-stay").addEventListener("click", () => {
+
+function stayAtHome() {
   hideExit();
-  history.forward(); // 센티널에서 기본 화면으로 복귀
+}
+
+document.getElementById("exit-stay").addEventListener("click", stayAtHome);
+
+document.addEventListener("keydown", (e) => {
+  if (!exitEl.hidden) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      stayAtHome();
+      return;
+    }
+    if (e.key === "Tab") {
+      const buttons = [...exitEl.querySelectorAll("button:not([disabled])")];
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    return;
+  }
+  if (e.key === "Escape" && top().overlay) history.back();
 });
+
 // [닫기] 결정적 폴백 (PRD F8): ① 창 닫기 시도 ② 차단되면 닫힘 화면 — 어떤 환경에서도 무반응 금지
 document.getElementById("exit-leave").addEventListener("click", () => {
   window.close();
@@ -130,7 +179,7 @@ document.getElementById("exit-leave").addEventListener("click", () => {
       <div class="goodbye">
         <div class="goodbye-box">
           <p class="t">천책빵을 닫았습니다.</p>
-          <p class="d">이 탭은 닫으셔도 됩니다. 오늘의 질문은 내일 새로 도착합니다.</p>
+          <p class="d">이 탭은 닫으셔도 됩니다.</p>
           <button class="btn btn-light" data-reopen="1">다시 열기</button>
         </div>
       </div>`;
@@ -468,23 +517,23 @@ function renderJourneyDetail() {
   overlayRoot.querySelector(".sheet").focus();
 }
 
-/* ── 오버레이: 프로필 로그인 (F9, 로컬 전용) ────────── */
+/* ── 오버레이: 내 서재 (F9, 로컬 프로필) ───────────── */
 function renderProfile() {
   const p = state.profile;
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
-      <div class="sheet" role="dialog" aria-modal="true" aria-label="프로필" tabindex="-1">
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="profile-title" aria-describedby="profile-note" tabindex="-1">
         <div class="sheet-handle"></div>
-        <h2>${p ? esc(p.name) + "님" : "로그인"}</h2>
-        <p class="meta">${p ? "이 기기의 서재에 로그인되어 있습니다" : "이름으로 나의 서재를 시작합니다"}</p>
+        <h2 id="profile-title">${p ? esc(p.name) + "님의 서재" : "내 서재"}</h2>
+        <p class="meta">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
         <input class="profile-input" id="profile-name" type="text" maxlength="20"
           placeholder="이름 또는 별명" value="${p ? esc(p.name) : ""}" aria-label="이름">
-        <p class="profile-note">기록은 이 기기에만 보관됩니다. 계정 연동과 기기 간 동기화는 다음 버전에서 제공합니다.</p>
+        <p id="profile-note" class="profile-note">기록과 이름은 이 기기에만 보관됩니다.</p>
         <div class="sheet-actions">
-          <button class="btn btn-primary" data-login="1">${p ? "이름 변경" : "로그인"}</button>
-          ${p ? `<button class="btn btn-ghost" data-logout="1">로그아웃</button>` : ""}
+          <button class="btn btn-primary" data-save-profile="1">${p ? "이름 변경" : "저장"}</button>
+          ${p ? `<button class="btn btn-ghost" data-clear-profile="1">이름 지우기</button>` : ""}
         </div>
-        <p id="profile-alert" role="alert" hidden>이름을 입력해 주세요.</p>
+        <p id="profile-alert" role="alert" hidden>이름 또는 별명을 입력해 주세요.</p>
       </div>
     </div>`;
   overlayRoot.querySelector(".sheet").focus();
@@ -510,17 +559,17 @@ function render() {
   else if (v.overlay.type === "profile") renderProfile();
 
   const pb = document.getElementById("profile-btn");
-  pb.textContent = state.profile ? `${state.profile.name}님` : "로그인";
+  pb.textContent = state.profile ? `${state.profile.name}님` : "내 서재";
 }
 
 /* ── 이벤트 위임 ───────────────────────────────────── */
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-login],[data-logout],[data-close-overlay]");
+  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-close-overlay]");
   if (!t) return;
 
   if (t.dataset.openProfile) {
     pushView({ tab: top().tab, overlay: { type: "profile" } });
-  } else if (t.dataset.login) {
+  } else if (t.dataset.saveProfile) {
     const input = document.getElementById("profile-name");
     const name = input.value.trim();
     const alertEl = document.getElementById("profile-alert");
@@ -528,7 +577,7 @@ document.addEventListener("click", (e) => {
     state.profile = { name };
     save();
     history.back(); // 프로필 시트 닫기
-  } else if (t.dataset.logout) {
+  } else if (t.dataset.clearProfile) {
     state.profile = null;
     save();
     history.back();

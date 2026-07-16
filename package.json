@@ -1,0 +1,11 @@
+{
+  "name": "cheonchaekbbang",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:mobile": "node tests/mobile-navigation.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}
