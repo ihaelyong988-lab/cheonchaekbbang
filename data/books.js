@@ -388,7 +388,7 @@ const EXISTING_BOOKS = [
   ...RESEARCH_BOOKS,
 ];
 
-export const BOOKS = [
+const COMBINED_BOOKS = [
   ...EXISTING_BOOKS.map((book) => {
     const enrichment = CELEB_EXISTING_ENRICHMENTS[book.id];
     return enrichment
@@ -397,6 +397,38 @@ export const BOOKS = [
   }),
   ...CELEB_BOOKS,
 ];
+
+function derivedQuestion(statement, suffix) {
+  const clean = String(statement).replace(/[.!?]$/u, "").replace(/\s+/g, " ");
+  const clipped = clean.slice(0, Math.max(8, 44 - suffix.length - 2));
+  return `“${clipped}”${suffix}`;
+}
+
+function ensureQuestionDepth(book) {
+  const questions = [...book.questions];
+  const source = `『${book.title}』 핵심 원리 기반 자체 질문`;
+  const candidates = [
+    derivedQuestion(book.principle, "라는 관점은 언제 성립하는가?"),
+    derivedQuestion(book.root_reason || book.principle, "라는 관점이 놓치는 것은 무엇인가?"),
+  ];
+  for (const text of candidates) {
+    if (questions.length >= 3) break;
+    if (!questions.some((question) => question.text === text)) questions.push({ text, source });
+  }
+  return { ...book, questions };
+}
+
+export const BOOKS = COMBINED_BOOKS.map(ensureQuestionDepth);
+
+// 정식 1,000권 교체 시 분야별 최소 균형 목표. 현재 목록은 목표를 넘지 않으며 단계적으로 채운다.
+export const DOMAIN_TARGETS = Object.freeze({
+  "철학": 170,
+  "역사": 160,
+  "과학": 170,
+  "문학": 180,
+  "경제·사회": 170,
+  "예술": 150,
+});
 
 // 질문 여정 6코스 — 분야당 1개, 뿌리→줄기→가지 순
 export const JOURNEYS = [

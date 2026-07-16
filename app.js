@@ -1,5 +1,6 @@
-// 천책빵 — 뿌리를 찾는 서재 (PRD-천책빵.md v1.5)
+// 천책빵 — 뿌리를 찾는 서재 (PRD-천책빵.md v1.7)
 import { BOOKS, JOURNEYS, DOMAINS, IS_SEED } from "./data/books.js";
+import { createQuestionSearch } from "./lib/search.js";
 
 /* ── 데이터 무결성 검증 (PRD §5) ───────────────────── */
 function validateBooks(books) {
@@ -33,30 +34,92 @@ const TIER_KO = { root: "뿌리", trunk: "줄기", branch: "가지" };
 
 /* ── 사용자 상태 (localStorage) ─────────────────────── */
 const STORE_KEY = "cheonchaek.v1";
+const STORE_VERSION = 2;
+const VALID_QUESTION_IDS = new Set(ALL.flatMap((book) =>
+  book.questions.map((question, index) => `${book.id}#${index}`)
+));
+
+function uniqueValidIds(value) {
+  return [...new Set(Array.isArray(value) ? value : [])].filter((id) => BY_ID.has(id));
+}
+
+function sanitizeState(source = {}) {
+  const read = uniqueValidIds(source.read);
+  const readSet = new Set(read);
+  const reading = uniqueValidIds(source.reading).filter((id) => !readSet.has(id));
+  const questionSeen = new Set();
+  const questions = (Array.isArray(source.questions) ? source.questions : [])
+    .filter((item) => item && VALID_QUESTION_IDS.has(item.id) && !questionSeen.has(item.id) && questionSeen.add(item.id))
+    .map((item) => ({
+      id: item.id,
+      bookId: item.id.split("#")[0],
+      date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
+      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
+    }));
+  const journeyDef = JOURNEYS.find((journey) => journey.id === source.journey?.id);
+  let journey = null;
+  if (journeyDef) {
+    const storedDone = new Set(uniqueValidIds(source.journey.doneBookIds));
+    const doneBookIds = [];
+    for (const id of journeyDef.bookIds) {
+      if (!storedDone.has(id)) break;
+      doneBookIds.push(id);
+    }
+    journey = { id: journeyDef.id, doneBookIds };
+  }
+  const doneSeen = new Set();
+  const journeysDone = (Array.isArray(source.journeysDone) ? source.journeysDone : [])
+    .filter((item) => JOURNEYS.some((journeyItem) => journeyItem.id === item?.id)
+      && !doneSeen.has(item.id) && doneSeen.add(item.id))
+    .map((item) => ({
+      id: item.id,
+      date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
+      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
+    }));
+  const profileName = typeof source.profile?.name === "string" ? source.profile.name.trim().slice(0, 20) : "";
+  return {
+    version: STORE_VERSION,
+    read, reading, questions,
+    rootArrivals: Number.isSafeInteger(source.rootArrivals) && source.rootArrivals >= 0 ? source.rootArrivals : 0,
+    journey, journeysDone,
+    profile: profileName ? { name: profileName } : null,
+    theme: source.theme === "navy" ? "navy" : "silver",
+    questionDeck: [...new Set(Array.isArray(source.questionDeck) ? source.questionDeck : [])]
+      .filter((id) => VALID_QUESTION_IDS.has(id)),
+    lastHeroQuestionId: VALID_QUESTION_IDS.has(source.lastHeroQuestionId) ? source.lastHeroQuestionId : null,
+  };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      return {
-        read: s.read || [], reading: s.reading || [],
-        questions: s.questions || [], rootArrivals: s.rootArrivals || 0,
-        journey: s.journey || null, journeysDone: s.journeysDone || [],
-        profile: s.profile || null,
-        theme: s.theme === "navy" ? "navy" : "silver",
-        questionDeck: Array.isArray(s.questionDeck) ? s.questionDeck : [],
-        lastHeroQuestionId: s.lastHeroQuestionId || null
-      };
-    }
+    if (raw) return sanitizeState(JSON.parse(raw));
   } catch { /* 손상 시 초기화 */ }
-  return {
-    read: [], reading: [], questions: [], rootArrivals: 0,
-    journey: null, journeysDone: [], profile: null,
-    theme: "silver", questionDeck: [], lastHeroQuestionId: null
-  };
+  return sanitizeState();
 }
 const state = loadState();
-function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+const appStatus = document.getElementById("app-status");
+let answerSaveTimer = 0;
+function announce(message) {
+  appStatus.textContent = "";
+  requestAnimationFrame(() => { appStatus.textContent = message; });
+}
+function save() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    return true;
+  } catch {
+    announce("기기 저장 공간이 부족해 변경 내용을 저장하지 못했습니다.");
+    return false;
+  }
+}
+function scheduleSave() {
+  clearTimeout(answerSaveTimer);
+  answerSaveTimer = setTimeout(save, 250);
+}
+window.addEventListener("pagehide", () => {
+  if (answerSaveTimer) { clearTimeout(answerSaveTimer); save(); }
+});
 function applyTheme() {
   document.documentElement.dataset.theme = state.theme;
   const color = state.theme === "navy" ? "#0F2A43" : "#E4E4DF";
@@ -128,8 +191,37 @@ const exitBackground = [".topbar", "#view", ".tabbar", "#overlay-root"]
 let exitReturnInProgress = false;
 let lastFocus = null;
 let appClosed = false;
+let overlayReturnFocus = null;
+
+function rememberFocus(element) {
+  if (!(element instanceof HTMLElement)) return null;
+  if (element.id) return { id: element.id };
+  const dataAttribute = [...element.attributes].find((attribute) => attribute.name.startsWith("data-"));
+  return dataAttribute ? { name: dataAttribute.name, value: dataAttribute.value } : null;
+}
+
+function restoreOverlayFocus() {
+  let target = overlayReturnFocus?.id ? document.getElementById(overlayReturnFocus.id) : null;
+  if (!target && overlayReturnFocus?.name) {
+    target = [...document.querySelectorAll(`[${overlayReturnFocus.name}]`)]
+      .find((element) => element.getAttribute(overlayReturnFocus.name) === overlayReturnFocus.value);
+  }
+  (target || document.querySelector(".tab[aria-current=page]") || viewEl)?.focus();
+  overlayReturnFocus = null;
+}
+
+function setOverlayBackgroundInert(inert) {
+  for (const selector of [".topbar", "#view", ".tabbar"]) {
+    const el = document.querySelector(selector);
+    el.inert = inert;
+    if (inert) el.setAttribute("aria-hidden", "true");
+    else el.removeAttribute("aria-hidden");
+  }
+  document.body.classList.toggle("has-overlay", inert);
+}
 
 function pushView(view) {
+  if (view.overlay && !top().overlay) overlayReturnFocus = rememberFocus(document.activeElement);
   stack.push(view);
   history.pushState({ i: stack.length - 1 }, "", HASH[view.tab]);
   render();
@@ -150,9 +242,13 @@ window.addEventListener("popstate", (e) => {
     if (!exitEl.hidden) return;
   }
   hideExit();
+  const hadOverlay = Boolean(top().overlay);
   stack = stack.slice(0, i + 1);
   if (stack.length === 0) stack = [{ tab: "question", overlay: null }];
   render();
+  if (hadOverlay && !top().overlay && overlayReturnFocus) {
+    requestAnimationFrame(restoreOverlayFocus);
+  }
 });
 
 function setExitBackgroundInert(inert) {
@@ -204,7 +300,24 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.key === "Escape" && top().overlay) history.back();
+  if (top().overlay) {
+    const sheet = overlayRoot.querySelector(".sheet");
+    if (e.key === "Escape") {
+      e.preventDefault();
+      history.back();
+      return;
+    }
+    if (e.key === "Tab" && sheet) {
+      const focusable = [...sheet.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )];
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!first) { e.preventDefault(); sheet.focus(); return; }
+      if (!sheet.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
 });
 
 // [닫기] 결정적 폴백 (PRD F8): ① 창 닫기 시도 ② 차단되면 닫힘 화면 — 어떤 환경에서도 무반응 금지
@@ -250,79 +363,10 @@ function bookCard(b, opts = {}) {
 /* ── 탭: 질문 (홈 대시보드) ─────────────────────────── */
 let sessionDomain = DOMAINS[0];
 let libQuery = "", libDomain = "전체", libTier = "전체";
+const LIB_PAGE_SIZE = 80;
+let libVisibleCount = LIB_PAGE_SIZE;
 let questionQuery = "", questionResults = [];
-
-const SEARCH_GROUPS = [
-  ["돈", "투자", "부", "경제", "시장", "경영", "재무"],
-  ["삶", "인생", "의미", "행복", "고통", "죽음"],
-  ["사랑", "관계", "가족", "우정", "돌봄", "공감"],
-  ["정의", "공정", "차별", "자유", "권리", "책임"],
-  ["습관", "성장", "배움", "공부", "실천", "변화"],
-  ["역사", "전쟁", "권력", "국가", "문명", "정치"],
-  ["과학", "기술", "우주", "생명", "진화", "에너지"],
-  ["예술", "문학", "그림", "아름다움", "창작", "상상"],
-];
-const SEARCH_STOP_WORDS = new Set([
-  "어떻게", "무엇", "무슨", "왜", "하는가", "인가", "있는가",
-  "해야", "할까", "대한", "대해", "질문", "책", "우리", "나는",
-]);
-
-function normalizeQuestionText(value) {
-  return String(value)
-    .toLocaleLowerCase("ko-KR")
-    .normalize("NFKC")
-    .replace(/[^0-9a-z가-힣\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function expandedTerms(query) {
-  const normalized = normalizeQuestionText(query);
-  const terms = new Set(normalized.split(" ")
-    .filter((term) => term.length > 1 && !SEARCH_STOP_WORDS.has(term)));
-  for (const group of SEARCH_GROUPS) {
-    if (group.some((term) => normalized.includes(term))) group.forEach((term) => terms.add(term));
-  }
-  return [...terms];
-}
-
-function bigrams(value) {
-  const compact = normalizeQuestionText(value).replace(/\s/g, "");
-  const set = new Set();
-  for (let i = 0; i < compact.length - 1; i += 1) set.add(compact.slice(i, i + 2));
-  return set;
-}
-
-function scoreText(query, terms, text) {
-  const target = normalizeQuestionText(text);
-  if (!target) return 0;
-  let score = query.length > 3 && target.includes(query) ? 12 : 0;
-  score += terms.reduce((sum, term) => sum + (target.includes(term) ? Math.min(5, term.length + 1) : 0), 0);
-  const queryPairs = new Set(terms.flatMap((term) => [...bigrams(term)]));
-  const targetPairs = bigrams(target);
-  let shared = 0;
-  queryPairs.forEach((pair) => { if (targetPairs.has(pair)) shared += 1; });
-  return score + Math.min(8, shared * 1.5);
-}
-
-function findBooksForQuestion(input) {
-  const query = normalizeQuestionText(input);
-  if (query.length < 2) return [];
-  const terms = expandedTerms(query);
-  return ALL.map((book) => {
-    const matches = book.questions
-      .map((question) => ({ question, score: scoreText(query, terms, question.text) }))
-      .sort((a, b) => b.score - a.score);
-    const best = matches[0];
-    const score = (best?.score || 0) * 2.2
-      + scoreText(query, terms, book.principle) * 1.4
-      + scoreText(query, terms, `${book.title} ${book.author} ${book.domain}`);
-    return { book, score, matchedQuestion: best?.question };
-  })
-    .filter((item) => item.score >= 7)
-    .sort((a, b) => b.score - a.score || a.book.title.localeCompare(b.book.title, "ko"))
-    .slice(0, 8);
-}
+const findBooksForQuestion = createQuestionSearch(ALL);
 
 function questionSearchHtml() {
   const results = questionResults.length
@@ -447,10 +491,12 @@ function renderLibrary() {
   if (libDomain !== "전체") books = books.filter((b) => b.domain === libDomain);
   if (libTier !== "전체") books = books.filter((b) => TIER_KO[b.tier] === libTier);
   if (q) books = books.filter((b) => b.title.includes(q) || b.author.includes(q));
+  const total = books.length;
+  const visibleBooks = books.slice(0, libVisibleCount);
 
   viewEl.innerHTML = `
     ${IS_SEED ? `<div class="notice">시드 데이터 ${ALL.length}권 — 정식 천 권 리스트 교체 예정</div>` : ""}
-    <p class="library-summary">${libDomain === "전체" ? "전체 서재" : esc(libDomain)} · ${books.length}권</p>
+    <p class="library-summary">${libDomain === "전체" ? "전체 서재" : esc(libDomain)} · ${total}권</p>
     <input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색">
     <div class="chips" role="group" aria-label="분야 필터">
       ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
@@ -458,10 +504,14 @@ function renderLibrary() {
     <div class="chips" role="group" aria-label="계단 필터">
       ${["전체", "뿌리", "줄기", "가지"].map((t) => `<button class="chip" data-libtier="${esc(t)}" aria-pressed="${t === libTier}">${esc(t)}</button>`).join("")}
     </div>
-    ${books.length ? books.map((b) => bookCard(b)).join("") : `<p class="empty">조건에 맞는 책이 없습니다.</p>`}`;
+    ${total ? visibleBooks.map((b) => bookCard(b)).join("") : `<p class="empty">조건에 맞는 책이 없습니다.</p>`}
+    ${visibleBooks.length < total
+      ? `<button class="btn btn-light load-more" data-load-more="1">더 보기 · ${visibleBooks.length}/${total}권</button>`
+      : ""}`;
   const input = document.getElementById("lib-search");
   input.addEventListener("input", () => {
     libQuery = input.value;
+    libVisibleCount = LIB_PAGE_SIZE;
     const pos = input.selectionStart;
     renderLibrary();
     const again = document.getElementById("lib-search");
@@ -532,6 +582,7 @@ function renderSheet(bookId) {
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(b.title)} 상세" tabindex="-1">
         <div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="책 상세 닫기">닫기</button>
         ${tierBadge(b)}${statusBadge(b.id)}
         <h2>${esc(b.title)}</h2>
         <p class="meta">${esc(b.author)} · ${esc(b.era)} · ${esc(b.domain)}</p>
@@ -574,6 +625,7 @@ function renderTrail(bookId) {
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="뿌리 따라가기" tabindex="-1">
         <div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="뿌리 따라가기 닫기">닫기</button>
         <p class="section-label">뿌리 따라가기 — 가지에서 뿌리로</p>
         ${steps}
         <div class="trail-end">
@@ -586,8 +638,6 @@ function renderTrail(bookId) {
       </div>
     </div>`;
   overlayRoot.querySelector(".sheet").focus();
-  state.rootArrivals += 1; // 뿌리 도달 시마다 +1 (중복 허용, PRD F1)
-  save();
 }
 
 /* ── 오버레이: 여정 목록 / 여정 상세 (F7) ───────────── */
@@ -607,6 +657,7 @@ function renderJourneyList() {
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 선택" tabindex="-1">
         <div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="여정 선택 닫기">닫기</button>
         <p class="section-label">질문 여정 — 하나의 질문, 뿌리에서 가지까지</p>
         ${state.journey ? `<div class="notice">진행 중인 여정을 완료한 뒤 새 여정을 시작할 수 있습니다.</div>` : ""}
         ${items}
@@ -620,12 +671,14 @@ function renderJourneyDetail() {
   if (!j) { overlayRoot.innerHTML = ""; return; }
   const doneIds = state.journey.doneBookIds;
   const allDone = j.bookIds.every((id) => doneIds.includes(id));
-  const books = j.bookIds.map((id) => {
+  const books = j.bookIds.map((id, index) => {
     const b = BY_ID.get(id);
     const checked = doneIds.includes(id);
+    const unlocked = j.bookIds.slice(0, index).every((previousId) => doneIds.includes(previousId));
+    const locked = !checked && !unlocked;
     return `
-      <div class="card journey-check">
-        <input type="checkbox" id="jc-${id}" data-jcheck="${id}" ${checked ? "checked" : ""} aria-label="${esc(b.title)} 읽음 체크">
+      <div class="card journey-check${locked ? " is-locked" : ""}">
+        <input type="checkbox" id="jc-${id}" data-jcheck="${id}" ${checked ? "checked" : ""} ${locked ? "disabled" : ""} aria-label="${esc(b.title)} 읽음 체크">
         <label for="jc-${id}" style="flex:1">
           ${tierBadge(b)}
           <div class="card-title">${esc(b.title)}</div>
@@ -650,6 +703,7 @@ function renderJourneyDetail() {
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 진행" tabindex="-1">
         <div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="여정 진행 닫기">닫기</button>
         <div class="q-card" style="margin-bottom:12px">
           <p class="q-kicker">${esc(j.domain)} 여정 · ${doneIds.length}/${j.bookIds.length}권</p>
           <p class="q-text" style="font-size:19px">${esc(j.question.text)}</p>
@@ -669,6 +723,7 @@ function renderProfile() {
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="profile-title" aria-describedby="profile-note" tabindex="-1">
         <div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="내 서재 닫기">닫기</button>
         <h2 id="profile-title">${p ? esc(p.name) + "님의 서재" : "내 서재"}</h2>
         <p class="meta">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
         <input class="profile-input" id="profile-name" type="text" maxlength="20"
@@ -687,6 +742,7 @@ function renderProfile() {
 /* ── 전체 렌더 ─────────────────────────────────────── */
 function render() {
   const v = top();
+  setOverlayBackgroundInert(Boolean(v.overlay));
   document.querySelectorAll(".tab").forEach((t) => {
     if (t.dataset.tab === v.tab) t.setAttribute("aria-current", "page");
     else t.removeAttribute("aria-current");
@@ -707,7 +763,7 @@ function render() {
   pb.textContent = state.profile ? `${state.profile.name}님` : "내 서재";
   const themeButton = document.getElementById("theme-btn");
   themeButton.textContent = state.theme === "navy" ? "은회" : "남색";
-  themeButton.setAttribute("aria-pressed", String(state.theme === "navy"));
+  themeButton.removeAttribute("aria-pressed");
   themeButton.setAttribute("aria-label", `${themeButton.textContent} 테마로 바꾸기`);
 }
 
@@ -717,7 +773,7 @@ function scrollPageTop() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
+  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
   if (!t) return;
 
   if (t.dataset.toggleTheme) {
@@ -750,6 +806,8 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
+    state.rootArrivals += 1;
+    save();
     pushView({ tab: top().tab, overlay: { type: "trail", bookId: t.dataset.openTrail } });
   } else if (t.dataset.openJlist) {
     pushView({ tab: top().tab, overlay: { type: "jlist" } });
@@ -778,6 +836,7 @@ document.addEventListener("click", (e) => {
     libQuery = "";
     libDomain = t.dataset.openDomainList;
     libTier = "전체";
+    libVisibleCount = LIB_PAGE_SIZE;
     pushView({ tab: "library", overlay: null });
     scrollPageTop();
   } else if (t.dataset.domain) {
@@ -785,9 +844,14 @@ document.addEventListener("click", (e) => {
     render();
   } else if (t.dataset.libdomain) {
     libDomain = t.dataset.libdomain;
+    libVisibleCount = LIB_PAGE_SIZE;
     render();
   } else if (t.dataset.libtier) {
     libTier = t.dataset.libtier;
+    libVisibleCount = LIB_PAGE_SIZE;
+    render();
+  } else if (t.dataset.loadMore) {
+    libVisibleCount += LIB_PAGE_SIZE;
     render();
   } else if (t.dataset.cycleRead) {
     cycleRead(t.dataset.cycleRead);
@@ -817,11 +881,17 @@ document.addEventListener("change", (e) => {
   const c = e.target.closest("[data-jcheck]");
   if (!c || !state.journey) return;
   const id = c.dataset.jcheck;
+  const journey = JOURNEYS.find((item) => item.id === state.journey.id);
+  const index = journey ? journey.bookIds.indexOf(id) : -1;
   if (c.checked) {
+    const previousDone = index >= 0 && journey.bookIds.slice(0, index)
+      .every((previousId) => state.journey.doneBookIds.includes(previousId));
+    if (!previousDone) { c.checked = false; return; }
     if (!state.journey.doneBookIds.includes(id)) state.journey.doneBookIds.push(id);
     setReadStatus(id, "read"); // 여정 체크 = 읽음 처리
   } else {
-    state.journey.doneBookIds = state.journey.doneBookIds.filter((x) => x !== id);
+    const removeIds = new Set(journey ? journey.bookIds.slice(index) : [id]);
+    state.journey.doneBookIds = state.journey.doneBookIds.filter((x) => !removeIds.has(x));
   }
   save();
   render();
@@ -831,13 +901,13 @@ document.addEventListener("input", (e) => {
   const qa = e.target.closest("[data-answer-q]");
   if (qa) {
     const item = state.questions.find((x) => x.id === qa.dataset.answerQ);
-    if (item) { item.myAnswer = qa.value; save(); }
+    if (item) { item.myAnswer = qa.value.slice(0, 10000); scheduleSave(); }
     return;
   }
   const ja = e.target.closest("[data-answer-j]");
   if (ja) {
     const item = state.journeysDone.find((x) => x.id === ja.dataset.answerJ);
-    if (item) { item.myAnswer = ja.value; save(); }
+    if (item) { item.myAnswer = ja.value.slice(0, 10000); scheduleSave(); }
   }
 });
 
