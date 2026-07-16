@@ -87,6 +87,7 @@ try {
   await page.reload({ waitUntil: "networkidle" });
 
   assert.equal(page.url(), `${baseURL}/#question`);
+  assert.equal(await page.title(), "천책빵 — 뿌리를 찾는 서재");
   assert.equal(await page.locator(".tab[aria-current=page] span").textContent(), "홈");
   assert.equal(await page.locator("#exit-dialog").isVisible(), false);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true);
