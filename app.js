@@ -42,14 +42,27 @@ function loadState() {
         read: s.read || [], reading: s.reading || [],
         questions: s.questions || [], rootArrivals: s.rootArrivals || 0,
         journey: s.journey || null, journeysDone: s.journeysDone || [],
-        profile: s.profile || null
+        profile: s.profile || null,
+        theme: s.theme === "navy" ? "navy" : "silver",
+        questionDeck: Array.isArray(s.questionDeck) ? s.questionDeck : [],
+        lastHeroQuestionId: s.lastHeroQuestionId || null
       };
     }
   } catch { /* 손상 시 초기화 */ }
-  return { read: [], reading: [], questions: [], rootArrivals: 0, journey: null, journeysDone: [], profile: null };
+  return {
+    read: [], reading: [], questions: [], rootArrivals: 0,
+    journey: null, journeysDone: [], profile: null,
+    theme: "silver", questionDeck: [], lastHeroQuestionId: null
+  };
 }
 const state = loadState();
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+function applyTheme() {
+  document.documentElement.dataset.theme = state.theme;
+  const color = state.theme === "navy" ? "#0F2A43" : "#E4E4DF";
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", color);
+}
+applyTheme();
 function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -73,15 +86,36 @@ function cycleRead(id) {
   setReadStatus(id, next[readStatus(id)]);
 }
 
-/* ── 오늘의 질문 ───────────────────────────────────── */
-const Q_POOL = ALL.filter((b) => b.tier === "root")
-  .flatMap((b) => b.questions.map((q, i) => ({ id: `${b.id}#${i}`, bookId: b.id, q })));
-let shuffleOffset = 0; // 세션 임시 — 새로고침 시 일자 질문 복귀 (PRD F2)
-function dailyIndex() {
-  const d = new Date();
-  const seed = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-  return (seed + shuffleOffset) % Q_POOL.length;
+/* ── 홈 질문: 앱을 열 때마다 한 번씩 순환 ───────────── */
+const Q_POOL = ALL.flatMap((b) =>
+  b.questions.map((q, i) => ({ id: `${b.id}#${i}`, bookId: b.id, q }))
+);
+const Q_BY_ID = new Map(Q_POOL.map((item) => [item.id, item]));
+
+function shuffledQuestionIds() {
+  const ids = Q_POOL.map((item) => item.id);
+  for (let i = ids.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return ids;
 }
+
+function drawQuestion() {
+  let deck = state.questionDeck.filter((id) => Q_BY_ID.has(id));
+  if (deck.length === 0) deck = shuffledQuestionIds();
+  let id = deck.shift();
+  if (id === state.lastHeroQuestionId && deck.length > 0) {
+    deck.push(id);
+    id = deck.shift();
+  }
+  state.questionDeck = deck;
+  state.lastHeroQuestionId = id;
+  save();
+  return Q_BY_ID.get(id) || Q_POOL[0];
+}
+
+let heroQuestion = drawQuestion();
 
 /* ── 내비게이션: 히스토리 스택 + 종료 트랩 (PRD F8, §6) ── */
 let stack = [{ tab: "question", overlay: null }];
@@ -93,6 +127,7 @@ const exitBackground = [".topbar", "#view", ".tabbar", "#overlay-root"]
   .map((selector) => document.querySelector(selector));
 let exitReturnInProgress = false;
 let lastFocus = null;
+let appClosed = false;
 
 function pushView(view) {
   stack.push(view);
@@ -102,6 +137,7 @@ function pushView(view) {
 function top() { return stack[stack.length - 1]; }
 
 window.addEventListener("popstate", (e) => {
+  if (appClosed) return;
   const i = e.state && typeof e.state.i === "number" ? e.state.i : -1;
   if (i < 0) {
     exitReturnInProgress = true;
@@ -175,15 +211,16 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("exit-leave").addEventListener("click", () => {
   window.close();
   setTimeout(() => {
+    appClosed = true;
+    setExitBackgroundInert(false);
+    history.replaceState({ closed: true }, "", HASH.question);
     document.body.innerHTML = `
-      <div class="goodbye">
+      <div class="goodbye" role="status" aria-live="polite">
         <div class="goodbye-box">
-          <p class="t">천책빵을 닫았습니다.</p>
-          <p class="d">이 탭은 닫으셔도 됩니다.</p>
-          <button class="btn btn-light" data-reopen="1">다시 열기</button>
+          <p class="t">천책빵 사용을 마쳤습니다.</p>
+          <p class="d">브라우저가 창 닫기를 제한한 경우 기기의 홈 화면으로 돌아가세요.</p>
         </div>
       </div>`;
-    document.querySelector("[data-reopen]").addEventListener("click", () => location.reload());
   }, 120);
 });
 
@@ -213,9 +250,111 @@ function bookCard(b, opts = {}) {
 /* ── 탭: 질문 (홈 대시보드) ─────────────────────────── */
 let sessionDomain = DOMAINS[0];
 let libQuery = "", libDomain = "전체", libTier = "전체";
+let questionQuery = "", questionResults = [];
+
+const SEARCH_GROUPS = [
+  ["돈", "투자", "부", "경제", "시장", "경영", "재무"],
+  ["삶", "인생", "의미", "행복", "고통", "죽음"],
+  ["사랑", "관계", "가족", "우정", "돌봄", "공감"],
+  ["정의", "공정", "차별", "자유", "권리", "책임"],
+  ["습관", "성장", "배움", "공부", "실천", "변화"],
+  ["역사", "전쟁", "권력", "국가", "문명", "정치"],
+  ["과학", "기술", "우주", "생명", "진화", "에너지"],
+  ["예술", "문학", "그림", "아름다움", "창작", "상상"],
+];
+const SEARCH_STOP_WORDS = new Set([
+  "어떻게", "무엇", "무슨", "왜", "하는가", "인가", "있는가",
+  "해야", "할까", "대한", "대해", "질문", "책", "우리", "나는",
+]);
+
+function normalizeQuestionText(value) {
+  return String(value)
+    .toLocaleLowerCase("ko-KR")
+    .normalize("NFKC")
+    .replace(/[^0-9a-z가-힣\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function expandedTerms(query) {
+  const normalized = normalizeQuestionText(query);
+  const terms = new Set(normalized.split(" ")
+    .filter((term) => term.length > 1 && !SEARCH_STOP_WORDS.has(term)));
+  for (const group of SEARCH_GROUPS) {
+    if (group.some((term) => normalized.includes(term))) group.forEach((term) => terms.add(term));
+  }
+  return [...terms];
+}
+
+function bigrams(value) {
+  const compact = normalizeQuestionText(value).replace(/\s/g, "");
+  const set = new Set();
+  for (let i = 0; i < compact.length - 1; i += 1) set.add(compact.slice(i, i + 2));
+  return set;
+}
+
+function scoreText(query, terms, text) {
+  const target = normalizeQuestionText(text);
+  if (!target) return 0;
+  let score = query.length > 3 && target.includes(query) ? 12 : 0;
+  score += terms.reduce((sum, term) => sum + (target.includes(term) ? Math.min(5, term.length + 1) : 0), 0);
+  const queryPairs = new Set(terms.flatMap((term) => [...bigrams(term)]));
+  const targetPairs = bigrams(target);
+  let shared = 0;
+  queryPairs.forEach((pair) => { if (targetPairs.has(pair)) shared += 1; });
+  return score + Math.min(8, shared * 1.5);
+}
+
+function findBooksForQuestion(input) {
+  const query = normalizeQuestionText(input);
+  if (query.length < 2) return [];
+  const terms = expandedTerms(query);
+  return ALL.map((book) => {
+    const matches = book.questions
+      .map((question) => ({ question, score: scoreText(query, terms, question.text) }))
+      .sort((a, b) => b.score - a.score);
+    const best = matches[0];
+    const score = (best?.score || 0) * 2.2
+      + scoreText(query, terms, book.principle) * 1.4
+      + scoreText(query, terms, `${book.title} ${book.author} ${book.domain}`);
+    return { book, score, matchedQuestion: best?.question };
+  })
+    .filter((item) => item.score >= 7)
+    .sort((a, b) => b.score - a.score || a.book.title.localeCompare(b.book.title, "ko"))
+    .slice(0, 8);
+}
+
+function questionSearchHtml() {
+  const results = questionResults.length
+    ? `<div class="question-results" aria-label="연관 책">
+        ${questionResults.map(({ book, matchedQuestion }) => `
+          <button class="card card-tap question-hit" data-open-book="${book.id}">
+            ${tierBadge(book)}
+            <div class="card-title">${esc(book.title)}</div>
+            <div class="card-meta">${esc(book.author)} · ${esc(book.domain)}</div>
+            <div class="match-question">${esc(matchedQuestion.text)}</div>
+          </button>`).join("")}
+      </div>`
+    : questionQuery
+      ? `<p class="empty">연결된 책을 찾지 못했습니다. 핵심 낱말을 바꿔 질문해 보세요.</p>`
+      : "";
+  const status = questionQuery
+    ? `${questionResults.length}권을 찾았습니다.`
+    : "질문을 입력하면 책을 찾습니다.";
+  return `
+    <p class="section-label">질문 하기</p>
+    <form id="question-search-form" class="question-search">
+      <label class="sr-only" for="question-search">책으로 이어질 질문</label>
+      <input id="question-search" class="search" type="search" minlength="2"
+        placeholder="예: 어떻게 살아야 하는가" value="${esc(questionQuery)}" required>
+      <button class="btn btn-primary" type="submit">책 찾기</button>
+    </form>
+    <p class="sr-only" id="question-search-status" role="status" aria-live="polite">${esc(status)}</p>
+    ${results}`;
+}
 
 function renderQuestion() {
-  const item = Q_POOL[dailyIndex()];
+  const item = heroQuestion;
   const b = BY_ID.get(item.bookId);
   const collected = state.questions.some((x) => x.id === item.id);
   const j = state.journey ? JOURNEYS.find((x) => x.id === state.journey.id) : null;
@@ -246,15 +385,16 @@ function renderQuestion() {
     const done = books.filter((x) => state.read.includes(x.id)).length;
     const pct = books.length ? Math.round((done / books.length) * 100) : 0;
     return `
-      <div class="gauge-row">
+      <button class="gauge-row" data-open-domain-list="${esc(d)}"
+        aria-label="${esc(d)} 책 목록 보기, ${done}권 읽음, 전체 ${books.length}권">
         <span class="name">${esc(d)}</span>
         <span class="bar"><i style="width:${pct}%"></i></span>
         <span class="num">${done}/${books.length}</span>
-      </div>`;
+      </button>`;
   }).join("");
 
   const qLen = item.q.text.length; // 2줄 고정 — 길이에 따라 글자만 압축, 박스 높이 불변
-  const qSize = qLen <= 22 ? "" : qLen <= 29 ? " q-mid" : " q-long";
+  const qSize = qLen <= 22 ? "" : qLen <= 29 ? " q-mid" : qLen <= 40 ? " q-long" : " q-xlong";
   viewEl.innerHTML = `
     <section aria-label="오늘의 질문">
       <div class="q-card">
@@ -283,7 +423,8 @@ function renderQuestion() {
       <p class="section-label">최근 질문</p>
       <button class="card card-tap" data-tab="record">
         <div class="card-title" style="font-family:var(--serif)">${esc(lastQObj.text)}</div>
-      </button>` : ""}`;
+      </button>` : ""}
+    ${questionSearchHtml()}`;
 }
 
 /* ── 탭: 계보 ─────────────────────────────────────── */
@@ -309,6 +450,7 @@ function renderLibrary() {
 
   viewEl.innerHTML = `
     ${IS_SEED ? `<div class="notice">시드 데이터 ${ALL.length}권 — 정식 천 권 리스트 교체 예정</div>` : ""}
+    <p class="library-summary">${libDomain === "전체" ? "전체 서재" : esc(libDomain)} · ${books.length}권</p>
     <input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색">
     <div class="chips" role="group" aria-label="분야 필터">
       ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
@@ -393,6 +535,9 @@ function renderSheet(bookId) {
         ${tierBadge(b)}${statusBadge(b.id)}
         <h2>${esc(b.title)}</h2>
         <p class="meta">${esc(b.author)} · ${esc(b.era)} · ${esc(b.domain)}</p>
+        ${b.celeb2025?.verificationStatus === "source-text-retained"
+          ? `<div class="notice source-note">엑셀 원문 표기를 보존한 항목입니다. 정확한 서지는 확인되지 않았습니다.</div>`
+          : ""}
         <div class="principle-box">${esc(b.principle)}</div>
         <p class="section-label">이 책이 던지는 질문</p>
         ${qs}
@@ -560,14 +705,27 @@ function render() {
 
   const pb = document.getElementById("profile-btn");
   pb.textContent = state.profile ? `${state.profile.name}님` : "내 서재";
+  const themeButton = document.getElementById("theme-btn");
+  themeButton.textContent = state.theme === "navy" ? "은회" : "남색";
+  themeButton.setAttribute("aria-pressed", String(state.theme === "navy"));
+  themeButton.setAttribute("aria-label", `${themeButton.textContent} 테마로 바꾸기`);
 }
 
 /* ── 이벤트 위임 ───────────────────────────────────── */
+function scrollPageTop() {
+  requestAnimationFrame(() => window.scrollTo(0, 0));
+}
+
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-close-overlay]");
+  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
   if (!t) return;
 
-  if (t.dataset.openProfile) {
+  if (t.dataset.toggleTheme) {
+    state.theme = state.theme === "navy" ? "silver" : "navy";
+    applyTheme();
+    save();
+    render();
+  } else if (t.dataset.openProfile) {
     pushView({ tab: top().tab, overlay: { type: "profile" } });
   } else if (t.dataset.saveProfile) {
     const input = document.getElementById("profile-name");
@@ -583,8 +741,12 @@ document.addEventListener("click", (e) => {
     history.back();
   } else if (t.dataset.tab) {
     const cur = top();
-    if (cur.tab === t.dataset.tab && !cur.overlay) return;
+    if (cur.tab === t.dataset.tab && !cur.overlay) {
+      if (cur.tab === "question") scrollPageTop();
+      return;
+    }
     pushView({ tab: t.dataset.tab, overlay: null });
+    if (t.dataset.tab === "question") scrollPageTop();
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
@@ -610,8 +772,14 @@ document.addEventListener("click", (e) => {
     }
     render();
   } else if (t.dataset.shuffle) {
-    shuffleOffset += 1;
+    heroQuestion = drawQuestion();
     render();
+  } else if (t.dataset.openDomainList) {
+    libQuery = "";
+    libDomain = t.dataset.openDomainList;
+    libTier = "전체";
+    pushView({ tab: "library", overlay: null });
+    scrollPageTop();
   } else if (t.dataset.domain) {
     sessionDomain = t.dataset.domain;
     render();
@@ -630,6 +798,19 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.closeOverlay) {
     if (e.target === t) history.back(); // 배경 탭 = 뒤로가기와 동일
   }
+});
+
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "question-search-form") return;
+  e.preventDefault();
+  const input = document.getElementById("question-search");
+  questionQuery = input.value.trim();
+  questionResults = findBooksForQuestion(questionQuery);
+  renderQuestion();
+  requestAnimationFrame(() => {
+    const result = document.querySelector(".question-results, .empty");
+    if (result) result.scrollIntoView({ block: "start" });
+  });
 });
 
 document.addEventListener("change", (e) => {

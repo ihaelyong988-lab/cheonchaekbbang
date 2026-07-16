@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "npm run test:data && npm run test:mobile",
+    "test:data": "node tests/data-integrity.mjs",
     "test:mobile": "node tests/mobile-navigation.mjs"
   },
   "devDependencies": {

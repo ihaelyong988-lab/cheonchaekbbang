@@ -75,6 +75,13 @@ async function back() {
 
 try {
   await page.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+  await page.evaluate(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((name) => caches.delete(name)));
+  });
+  await page.reload({ waitUntil: "networkidle" });
   await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
   await page.reload({ waitUntil: "networkidle" });
 
@@ -90,10 +97,79 @@ try {
     })
     .map((button) => ({ text: button.textContent.trim(), width: button.offsetWidth, height: button.offsetHeight }))), []);
 
+  const firstOpeningQuestion = await page.locator(".q-text").innerText();
   await context.setOffline(true);
   await page.reload({ waitUntil: "domcontentloaded" });
   assert.equal(await page.locator(".tab[aria-current=page] span").textContent(), "홈");
+  const secondOpeningQuestion = await page.locator(".q-text").innerText();
+  assert.notEqual(secondOpeningQuestion, firstOpeningQuestion, "앱을 다시 열었을 때 직전 질문이 반복됐습니다.");
   await context.setOffline(false);
+
+  const catalog = await page.evaluate(async () => {
+    const { BOOKS } = await import("./data/books.js");
+    return {
+      books: BOOKS.length,
+      questions: BOOKS.reduce((sum, book) => sum + book.questions.length, 0),
+      literature: BOOKS.filter((book) => book.domain === "문학").length,
+    };
+  });
+  assert.deepEqual(catalog, { books: 175, questions: 370, literature: 64 });
+
+  const questionLineFailures = await page.evaluate(async () => {
+    const { BOOKS } = await import("./data/books.js");
+    const original = document.querySelector(".q-text");
+    const probe = original.cloneNode(true);
+    const span = probe.querySelector("span");
+    probe.style.position = "fixed";
+    probe.style.visibility = "hidden";
+    probe.style.width = `${original.getBoundingClientRect().width}px`;
+    probe.style.height = "auto";
+    probe.style.display = "block";
+    span.style.display = "block";
+    span.style.webkitLineClamp = "unset";
+    span.style.overflow = "visible";
+    document.body.append(probe);
+    const failures = [];
+    for (const book of BOOKS) {
+      for (const question of book.questions) {
+        const length = question.text.length;
+        probe.className = `q-text${length <= 22 ? "" : length <= 29 ? " q-mid" : length <= 40 ? " q-long" : " q-xlong"}`;
+        span.textContent = question.text;
+        const lineHeight = Number.parseFloat(getComputedStyle(probe).lineHeight);
+        const lines = Math.ceil((span.getBoundingClientRect().height - 0.5) / lineHeight);
+        if (lines > 2) failures.push({ bookId: book.id, text: question.text, lines });
+      }
+    }
+    probe.remove();
+    return failures;
+  });
+  assert.deepEqual(questionLineFailures, []);
+
+  await page.locator("#theme-btn").click();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "navy");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "navy");
+  assert.equal(await page.locator("#theme-btn").textContent(), "은회");
+  await page.locator("#theme-btn").click();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "silver");
+
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  assert.ok(await page.evaluate(() => window.scrollY > 0));
+  await page.locator('.tab[data-tab="question"]').click();
+  await page.waitForTimeout(80);
+  assert.equal(await page.evaluate(() => window.scrollY), 0);
+
+  await page.locator('[data-open-domain-list="문학"]').click();
+  assert.equal(await page.locator(".tab[aria-current=page] span").textContent(), "서재");
+  assert.equal(await page.locator(".library-summary").textContent(), "문학 · 64권");
+  assert.equal(await page.locator(".view > .card").count(), 64);
+  await back();
+  assert.equal(await page.locator(".tab[aria-current=page] span").textContent(), "홈");
+
+  await page.locator("#question-search").fill("돈과 투자는 어떻게 판단해야 하는가");
+  await page.locator("#question-search-form").evaluate((form) => form.requestSubmit());
+  assert.ok(await page.locator(".question-hit").count() > 0);
+  assert.equal(await page.getByText("현명한 투자자", { exact: true }).count() > 0, true);
 
   await page.locator('.tab[data-tab="lineage"]').click();
   await page.locator('.tab[data-tab="library"]').click();
@@ -161,13 +237,20 @@ try {
   await page.locator("#exit-leave").click();
   await page.waitForTimeout(180);
   assert.equal(await page.locator(".goodbye").isVisible(), true);
-  assert.match(await page.locator(".goodbye").innerText(), /천책빵을 닫았습니다/);
+  assert.match(await page.locator(".goodbye").innerText(), /천책빵 사용을 마쳤습니다/);
   assert.deepEqual(runtimeErrors, []);
 
   console.log(JSON.stringify({
     result: "pass",
     viewport: "390x844",
     homeFirst: true,
+    openingQuestionRotates: true,
+    questionPool: catalog.questions,
+    questionTwoLineGate: true,
+    themePersistence: true,
+    homeRetapScrollTop: true,
+    domainGraphToLibrary: true,
+    questionSearch: true,
     backSequence: ["서재", "계보", "홈", "종료 확인"],
     exitFocusTrap: true,
     repeatedBackGuard: true,

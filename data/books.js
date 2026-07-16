@@ -1,7 +1,9 @@
-// 천책빵 핵심 계보 60권 + 리서치 실측 목록 신규 59권.
-// 중복 7권은 기존 id에 리서치 근거만 결합해 로컬 기록을 보존한다.
+// 천책빵 핵심 계보 60권 + 리서치 실측 목록 신규 59권
+// + Celeb 인생책 추천 2025년 신규 56권.
+// 중복 작품은 기존 id에 근거와 질문을 결합해 로컬 기록을 보존한다.
 
 import { RESEARCH_BOOKS, RESEARCH_BY_BOOK_ID } from "./research-books.js";
+import { CELEB_BOOKS, CELEB_EXISTING_ENRICHMENTS } from "./celeb-books-2025.js";
 
 export const DOMAINS = ["철학", "역사", "과학", "문학", "경제·사회", "예술"];
 
@@ -379,11 +381,21 @@ const CORE_BOOKS = [
   }
 ];
 
-export const BOOKS = [
+const EXISTING_BOOKS = [
   ...CORE_BOOKS.map((book) => RESEARCH_BY_BOOK_ID[book.id]
     ? { ...book, research: RESEARCH_BY_BOOK_ID[book.id] }
     : book),
   ...RESEARCH_BOOKS,
+];
+
+export const BOOKS = [
+  ...EXISTING_BOOKS.map((book) => {
+    const enrichment = CELEB_EXISTING_ENRICHMENTS[book.id];
+    return enrichment
+      ? { ...book, questions: [...book.questions, ...enrichment.questions], celeb2025: enrichment.celeb2025 }
+      : book;
+  }),
+  ...CELEB_BOOKS,
 ];
 
 // 질문 여정 6코스 — 분야당 1개, 뿌리→줄기→가지 순
