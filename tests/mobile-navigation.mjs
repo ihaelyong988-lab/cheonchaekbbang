@@ -20,6 +20,7 @@ const MIME = {
 function findBrowser() {
   const candidates = [
     process.env.PLAYWRIGHT_CHROME_PATH,
+    chromium.executablePath(),
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
@@ -115,7 +116,7 @@ try {
       literature: BOOKS.filter((book) => book.domain === "문학").length,
     };
   });
-  assert.deepEqual(catalog, { books: 175, questions: 370, literature: 64 });
+  assert.deepEqual(catalog, { books: 175, questions: 590, literature: 64 });
 
   const questionLineFailures = await page.evaluate(async () => {
     const { BOOKS } = await import("./data/books.js");
@@ -149,6 +150,8 @@ try {
 
   await page.locator("#theme-btn").click();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "navy");
+  assert.equal(await page.locator("#theme-btn").getAttribute("aria-pressed"), null);
+  assert.equal(await page.locator("#theme-btn").getAttribute("aria-label"), "은회 테마로 바꾸기");
   assert.equal(await page.locator(".q-card").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(23, 58, 85)");
   assert.equal(await page.locator(".topbar").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(15, 42, 67)");
   await page.reload({ waitUntil: "networkidle" });
@@ -244,6 +247,41 @@ try {
   assert.match(await page.locator(".goodbye").innerText(), /천책빵 사용을 마쳤습니다/);
   assert.deepEqual(runtimeErrors, []);
 
+  const responsive = [];
+  for (const width of [360, 390, 430]) {
+    const auditContext = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width, height: 844 },
+    });
+    const auditPage = await auditContext.newPage();
+    const auditErrors = [];
+    auditPage.on("console", (message) => {
+      if (["error", "warning"].includes(message.type())) auditErrors.push(`${message.type()}: ${message.text()}`);
+    });
+    auditPage.on("pageerror", (error) => auditErrors.push(`pageerror: ${error.message}`));
+    await auditPage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+    await auditPage.evaluate(async () => {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((name) => caches.delete(name)));
+    });
+    await auditPage.reload({ waitUntil: "networkidle" });
+    assert.equal(await auditPage.locator(".tab").count(), 4, `${width}px: 4탭 누락`);
+    assert.equal(await auditPage.locator('.tab[aria-current="page"] span').textContent(), "홈", `${width}px: 홈 첫 화면 아님`);
+    assert.equal(await auditPage.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `${width}px: 가로 넘침`);
+    assert.deepEqual(await auditPage.locator("button").evaluateAll((buttons) => buttons
+      .filter((button) => {
+        const rect = button.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44);
+      })
+      .map((button) => button.textContent.trim())), [], `${width}px: 44px 미달 버튼`);
+    assert.deepEqual(auditErrors, [], `${width}px: 런타임 오류`);
+    responsive.push(`${width}x844`);
+    await auditContext.close();
+  }
+
   console.log(JSON.stringify({
     result: "pass",
     viewport: "390x844",
@@ -251,6 +289,7 @@ try {
     openingQuestionRotates: true,
     questionPool: catalog.questions,
     questionTwoLineGate: true,
+    responsive,
     themePersistence: true,
     homeRetapScrollTop: true,
     domainGraphToLibrary: true,

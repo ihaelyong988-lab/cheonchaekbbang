@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { BOOKS, DOMAINS } from "../data/books.js";
+import { BOOKS, DOMAIN_TARGETS, DOMAINS, JOURNEYS } from "../data/books.js";
 import {
   CELEB_BOOKS,
   CELEB_EXISTING_ENRICHMENTS,
@@ -24,7 +24,7 @@ const byId = new Map(BOOKS.map((book) => [book.id, book]));
 for (const book of BOOKS) {
   assert.ok(DOMAINS.includes(book.domain), `${book.id}: 허용되지 않은 분야`);
   assert.ok(book.principle, `${book.id}: 핵심 원리 누락`);
-  assert.ok(book.questions.length > 0, `${book.id}: 질문 누락`);
+  assert.ok(book.questions.length >= 3, `${book.id}: 질문 3개 미만`);
   assert.ok(book.questions.every((question) => question.text && question.source), `${book.id}: 질문 또는 출처 누락`);
   assert.ok(book.questions.every((question) => question.text.length <= 44), `${book.id}: 홈 2줄 기준 초과 질문`);
   if (book.tier === "root") {
@@ -45,12 +45,45 @@ for (const book of BOOKS) {
 assert.ok(CELEB_BOOKS.every((book) => book.questions.length === 4), "Celeb 신규 책은 질문 4개여야 합니다.");
 assert.equal(
   CELEB_BOOKS.filter((book) => book.celeb2025.verificationStatus === "source-text-retained").length,
-  5,
+  4,
   "서지 확인 불가 항목은 원문 보존 상태로 표시해야 합니다."
+);
+const verifiedCorrection = byId.get("later-youth-leaving");
+assert.deepEqual(
+  [verifiedCorrection.title, verifiedCorrection.author, verifiedCorrection.era, verifiedCorrection.celeb2025.verificationStatus],
+  ["느린 청춘, 문득 떠남", "티어라이너", "2013", "verified-correction"],
+  "검증된 서지 교정이 반영되어야 합니다."
 );
 for (const id of Object.keys(CELEB_EXISTING_ENRICHMENTS)) {
   assert.ok(byId.get(id).questions.length >= 4, `${id}: 기존 책 질문 보강 누락`);
 }
+
+const tierRank = { root: 0, trunk: 1, branch: 2 };
+assert.equal(JOURNEYS.length, DOMAINS.length, "분야별 여정은 하나씩 있어야 합니다.");
+assert.equal(new Set(JOURNEYS.map((journey) => journey.id)).size, JOURNEYS.length, "여정 id가 중복됩니다.");
+for (const journey of JOURNEYS) {
+  assert.ok(DOMAINS.includes(journey.domain), `${journey.id}: 허용되지 않은 여정 분야`);
+  assert.ok(journey.question.text && journey.question.source, `${journey.id}: 여정 질문 출처 누락`);
+  assert.ok(journey.bookIds.length >= 4 && journey.bookIds.length <= 5, `${journey.id}: 여정은 4~5권이어야 합니다.`);
+  assert.equal(new Set(journey.bookIds).size, journey.bookIds.length, `${journey.id}: 여정 책 중복`);
+  const journeyBooks = journey.bookIds.map((id) => byId.get(id));
+  assert.ok(journeyBooks.every(Boolean), `${journey.id}: 존재하지 않는 책`);
+  assert.ok(journeyBooks.every((book) => book.domain === journey.domain), `${journey.id}: 분야가 다른 책`);
+  assert.equal(journeyBooks[0].tier, "root", `${journey.id}: 첫 책은 뿌리여야 합니다.`);
+  for (let index = 1; index < journeyBooks.length; index += 1) {
+    assert.ok(tierRank[journeyBooks[index - 1].tier] <= tierRank[journeyBooks[index].tier], `${journey.id}: 뿌리→줄기→가지 순서 위반`);
+  }
+}
+
+assert.deepEqual(Object.keys(DOMAIN_TARGETS), DOMAINS, "분야 목표의 순서와 이름이 앱 분야와 같아야 합니다.");
+assert.equal(Object.values(DOMAIN_TARGETS).reduce((sum, count) => sum + count, 0), 1000, "분야 목표 합계는 1,000권이어야 합니다.");
+for (const domain of DOMAINS) {
+  assert.ok(BOOKS.filter((book) => book.domain === domain).length <= DOMAIN_TARGETS[domain], `${domain}: 현재 목록이 확장 목표를 초과합니다.`);
+}
+
+const questionTexts = BOOKS.flatMap((book) => book.questions.map((question) => question.text));
+assert.equal(new Set(questionTexts.map((text) => text.replace(/\s+/gu, " ").trim())).size, questionTexts.length, "질문 문구가 중복됩니다.");
+assert.ok(questionTexts.every((text) => !/내 삶에서 바꿀 한 가지/u.test(text)), "일괄 생성형 질문 문구가 남아 있습니다.");
 
 console.log(JSON.stringify({
   result: "pass",

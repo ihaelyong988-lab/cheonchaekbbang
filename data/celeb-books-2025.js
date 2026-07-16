@@ -110,7 +110,7 @@ const BOOK_ROWS = [
   ["weight-seo", "무게", "서영채", "연도 미상", "예술", "문학을 읽고 비평하는 일은 한 문장과 한 삶이 감당하는 윤리적 무게를 재는 과정이다.", "좋은 비평은 작품을 설명하는가 다시 질문하게 하는가?", "문장의 아름다움과 윤리적 책임은 함께 갈 수 있는가?", "독자는 타인의 고통을 어디까지 이해할 수 있는가?", "poetics", "작품의 형식과 효과를 분석하는 고전 문학론을 현대 비평의 윤리로 확장한다."],
   ["life-pi", "파이 이야기", "얀 마텔", "2001", "문학", "극한의 생존 뒤에 남는 여러 이야기는 사실과 믿음 중 무엇이 삶을 지탱하는지 묻게 한다.", "살아남기 위해 믿은 이야기는 거짓인가 진실인가?", "인간과 짐승을 가르는 경계는 극한에서도 유지되는가?", "더 나은 이야기를 선택하는 것이 사실을 외면하는 일인가?", "guunmong", "현실과 환상의 두 이야기를 겹쳐 삶과 믿음의 경계를 묻는 서사의 계보다."],
   ["three-kingdoms-lee", "이문열 삼국지", "나관중·이문열 평역", "1988", "역사", "권력의 흥망은 영웅의 능력만이 아니라 명분·동맹·시대 조건의 결합으로 움직인다.", "큰 뜻을 위해 수단의 부당함을 허용할 수 있는가?", "인재를 알아보는 능력과 지키는 능력 중 무엇이 중요한가?", "승자의 기록은 패자의 선택을 공정하게 남기는가?", "shiji", "인물의 선택과 권력의 흥망을 열전으로 읽는 역사 서사의 계보를 잇는다."],
-  ["later-youth-leaving", "나중에 청춘, 문득 떠남", "장강명·류시화", "연도 미상", "문학", "원자료에서 두 추천 기록이 합쳐진 것으로 보이는 항목을 청춘과 떠남의 주제로 보존한다.", "청춘은 나이인가 아직 선택할 수 있다는 감각인가?", "떠남은 삶을 바꾸는가 삶을 보는 시선을 바꾸는가?", "뒤늦게 시작한 선택도 새로운 출발이 될 수 있는가?", "shijing", "개인의 목소리로 한 시대의 삶과 이동을 기록하는 서사의 계보에 연결한다."],
+  ["later-youth-leaving", "느린 청춘, 문득 떠남", "티어라이너", "2013", "문학", "여행의 속도를 늦추면 익숙한 생활에서 보이지 않던 자기 내면과 타인의 일상이 드러난다.", "청춘은 나이인가 아직 선택할 수 있다는 감각인가?", "떠남은 삶을 바꾸는가 삶을 보는 시선을 바꾸는가?", "느린 여행은 더 많은 장소보다 무엇을 보게 하는가?", "shijing", "개인의 목소리로 한 시대의 삶과 이동을 기록하는 서사의 계보에 연결한다."],
   ["taebaek-mountains", "태백산맥", "조정래", "1983~1989", "문학", "분단과 이념의 역사는 한 지역의 수많은 삶을 갈라놓으며 어느 한쪽의 목소리만으로 설명되지 않는다.", "이념은 평범한 이웃을 어떻게 적으로 만드는가?", "역사의 큰 갈등 속에서 개인의 선택은 얼마나 자유로운가?", "화해는 기억을 지우지 않고도 가능한가?", "shijing", "민중의 여러 목소리로 공동체의 역사와 상처를 기록하는 대하 서사의 계보를 잇는다."],
   ["yawning-bad", "하품이 나쁘다", "강지영", "연도 미상", "문학", "익숙한 일상에 생긴 작은 균열을 따라가며 무심히 넘긴 징후와 판단의 허점을 묻는다.", "평범한 징후를 위험으로 알아보는 기준은 무엇인가?", "의심은 진실에 다가가는가 관계를 무너뜨리는가?", "사건을 해결한 뒤에도 남는 책임은 무엇인가?", "crime-punishment", "사건의 진실과 개인의 죄책감을 함께 추적하는 범죄 서사의 계보에 연결한다."],
   ["democracy-america", "미국의 민주주의", "알렉시 드 토크빌", "1835·1840", "경제·사회", "민주주의는 제도만이 아니라 평등한 조건·결사·습관이 함께 지탱하며 다수의 횡포를 경계해야 한다.", "다수의 결정은 언제 소수의 자유를 침해하는가?", "민주주의를 지키는 습관은 투표 밖에서 어떻게 만들어지는가?", "평등에 대한 열망은 자유를 약하게 만들 수 있는가?", "social-contract", "시민의 동의로 정당성을 세우는 사회계약의 원리를 실제 민주주의 제도와 습관에서 검토한다."],
@@ -139,11 +139,18 @@ for (const row of CELEB_ROWS) {
 
 const SOURCE_TEXT_RETAINED = new Set([
   "living-cheyenne",
-  "later-youth-leaving",
   "yawning-bad",
   "martin-wonderful-world",
   "blue-hour-source",
 ]);
+
+const VERIFIED_CORRECTIONS = {
+  "later-youth-leaving": {
+    verificationStatus: "verified-correction",
+    verificationUrl: "https://www.yes24.com/product/goods/11192883",
+    verificationNote: "예스24 서지: 티어라이너, 더난출판사, 2013-10-24",
+  },
+};
 
 const provenance = (bookId, canonicalTitle, canonicalAuthor) => ({
   sourceFile: "교보문고_장바구니_상품리스트25년 11월26일.xlsx",
@@ -153,14 +160,22 @@ const provenance = (bookId, canonicalTitle, canonicalAuthor) => ({
   canonicalAuthor,
   verificationStatus: SOURCE_TEXT_RETAINED.has(bookId)
     ? "source-text-retained"
-    : "normalized",
+    : VERIFIED_CORRECTIONS[bookId]?.verificationStatus || "normalized",
+  verificationUrl: VERIFIED_CORRECTIONS[bookId]?.verificationUrl || "",
+  verificationNote: VERIFIED_CORRECTIONS[bookId]?.verificationNote || "",
   recommendations: SOURCE_BY_BOOK_ID.get(bookId) || [],
 });
 
-function designedQuestions(title, q1, q2, q3) {
-  const source = `『${title}』의 핵심 주제`;
-  const shortTitle = title.length > 16 ? `${title.slice(0, 16)}…` : title;
-  return [q1, q2, q3, `『${shortTitle}』을 읽고 내 삶에서 바꿀 한 가지는 무엇인가?`]
+function principleQuestion(principle) {
+  const suffix = "라는 관점은 언제 성립하는가?";
+  const clean = principle.replace(/[.!?]$/u, "").replace(/\s+/g, " ");
+  const clipped = clean.slice(0, Math.max(8, 44 - suffix.length - 2));
+  return `“${clipped}”${suffix}`;
+}
+
+function designedQuestions(title, principle, q1, q2, q3) {
+  const source = `『${title}』의 핵심 주제와 원리 기반 자체 질문`;
+  return [q1, q2, q3, principleQuestion(principle)]
     .map((text) => ({ text, source }));
 }
 
@@ -168,7 +183,7 @@ export const CELEB_BOOKS = BOOK_ROWS.map((row) => {
   const [id, title, author, era, domain, principle, q1, q2, q3, parentId, rootReason] = row;
   return {
     id, title, author, era, domain, tier: "branch", principle,
-    questions: designedQuestions(title, q1, q2, q3),
+    questions: designedQuestions(title, principle, q1, q2, q3),
     roots: [parentId], root_reason: rootReason,
     celeb2025: provenance(id, title, author),
   };

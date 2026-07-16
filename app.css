@@ -3,6 +3,7 @@
   --silver: #E4E4DF;      /* 주 표면: 헤더·뿌리 카드 (먹색 글자) */
   --silver-line: #D2D2C9; /* 은회 표면 경계 */
   --hero-surface: #D6D6CF; /* 질문 히어로: 기본 은회보다 한 단계 짙은 표면 */
+  --hero-accent: #704600;  /* 질문 표면 위 작은 라벨: 4.5:1 이상 */
   --ink: #26282A;         /* 먹색 본문 */
   --paper: #F5F5F1;       /* 배경 회백 */
   --charcoal: #3A3C39;    /* 주 행동 버튼 (백색 텍스트 9:1) */
@@ -20,6 +21,7 @@ html[data-theme="navy"] {
   --silver: #0F2A43;
   --silver-line: #36536C;
   --hero-surface: #173A55;
+  --hero-accent: #E2BF7A;
   --ink: #F5F2EA;
   --paper: #10263A;
   --charcoal: #2456A6;
@@ -166,6 +168,7 @@ body {
 .qstat span { display: block; font-size: 10.5px; color: var(--muted); letter-spacing: 0.02em; }
 /* 상세 화면(여정 등) 전용 보조 텍스트 — 홈 히어로에는 사용 금지 */
 .q-kicker { font-size: 12px; color: var(--bronze); letter-spacing: 0.08em; margin-bottom: 10px; font-weight: 700; }
+.q-card .q-kicker { color: var(--hero-accent); }
 .q-source { font-size: 13px; color: var(--muted); margin-top: 12px; }
 
 /* 버튼 */
@@ -271,6 +274,7 @@ body {
 .question-search .search { margin-bottom: 0; }
 .question-search .btn { min-width: 74px; }
 .question-results { margin-top: 10px; }
+.load-more { width: 100%; margin-top: 4px; }
 .match-question {
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
   font-family: var(--serif); font-size: 13.5px; line-height: 1.5; color: var(--ink);
@@ -322,8 +326,15 @@ body {
   width: 100%; max-width: 480px; max-height: 86dvh; overflow-y: auto;
   background: var(--paper); border-radius: 14px 14px 0 0;
   padding: 18px 18px calc(24px + env(safe-area-inset-bottom));
+  position: relative; overscroll-behavior: contain;
 }
+.has-overlay { overflow: hidden; }
 .sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--silver-line); margin: 0 auto 14px; }
+.sheet-close {
+  position: absolute; top: 8px; right: 10px; min-width: 44px; min-height: 44px;
+  border: 0; background: transparent; color: var(--muted); font-family: var(--sans);
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
 .sheet h2 { font-size: 19px; font-weight: 700; word-break: keep-all; }
 .sheet .meta { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
 .principle-box {
@@ -362,6 +373,8 @@ body {
 
 /* 여정 */
 .journey-check { display: flex; align-items: center; gap: 12px; }
+.journey-check.is-locked { opacity: 0.58; }
+.journey-check.is-locked label { cursor: not-allowed; }
 .journey-check input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--charcoal); flex: 0 0 auto; }
 .journey-done {
   background: var(--silver); color: var(--ink); border: 1px solid var(--silver-line);
