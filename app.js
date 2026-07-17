@@ -457,18 +457,19 @@ function renderQuestion() {
       </div>
     </section>
 
-    <p class="section-label">분야별 진행</p>
-    <div class="gauge">${gaugeRows}</div>
-
-    <p class="section-label">질문 여정</p>
-    ${journeyHtml}
-    ${readingNow.length ? `<p class="section-label">읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true })).join("") : ""}
+    ${questionSearchHtml()}
     ${lastQObj ? `
       <p class="section-label">최근 질문</p>
       <button class="card card-tap" data-tab="record">
         <div class="card-title" style="font-family:var(--serif)">${esc(lastQObj.text)}</div>
       </button>` : ""}
-    ${questionSearchHtml()}`;
+
+    <p class="section-label">질문 여정</p>
+    ${journeyHtml}
+    ${readingNow.length ? `<p class="section-label">읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true })).join("") : ""}
+
+    <p class="section-label">분야별 진행</p>
+    <div class="gauge">${gaugeRows}</div>`;
 }
 
 /* ── 탭: 계보 ─────────────────────────────────────── */

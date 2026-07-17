@@ -28,7 +28,7 @@ const tabOrder = ["question", "lineage", "library", "record"].map((tab) => html.
 assert.ok(tabOrder.every((position) => position >= 0), "필수 탭 누락");
 assert.deepEqual([...tabOrder].sort((a, b) => a - b), tabOrder, "홈→계보→서재→기록 순서를 유지해야 합니다.");
 
-const homeOrder = ["분야별 진행", "질문 여정", "최근 질문", "${questionSearchHtml()}"]
+const homeOrder = ["${questionSearchHtml()}", "${lastQObj ? `", "<p class=\"section-label\">질문 여정</p>", "<p class=\"section-label\">분야별 진행</p>"]
   .map((marker) => app.indexOf(marker));
 assert.ok(homeOrder.every((position) => position >= 0), "홈 정보 순서 표식 누락");
 assert.deepEqual([...homeOrder].sort((a, b) => a - b), homeOrder, "홈 정보 순서를 유지해야 합니다.");
@@ -54,7 +54,7 @@ for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), 
 for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
-assert.match(sw, /ccb-v1\.7\.1/u, "서비스워커 캐시 버전이 v1.7.1이어야 합니다.");
+assert.match(sw, /ccb-v1\.7\.2/u, "서비스워커 캐시 버전이 v1.7.2이어야 합니다.");
 
 const uiSource = `${html}\n${app}\n${css}`;
 assert.doesNotMatch(uiSource, /천책방/u, "정식 명칭 오기");
