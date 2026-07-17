@@ -1,5 +1,5 @@
 // 천책빵 Service Worker — 전 자산 캐시, 완전 오프라인 동작 (PRD §6)
-const CACHE = "ccb-v1.7.2";
+const CACHE = "ccb-v1.7.3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -22,8 +22,14 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
+      .then(async (keys) => {
+        const isUpdate = keys.some((key) => key.startsWith("ccb-") && key !== CACHE);
+        await Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)));
+        await self.clients.claim();
+        if (!isUpdate) return;
+        const clients = await self.clients.matchAll({ type: "window" });
+        await Promise.all(clients.map((client) => client.navigate(client.url)));
+      })
   );
 });
 
