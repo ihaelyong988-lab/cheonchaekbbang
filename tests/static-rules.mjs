@@ -54,7 +54,7 @@ for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), 
 for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
-assert.match(sw, /ccb-v1\.7\.4/u, "서비스워커 캐시 버전이 v1.7.4이어야 합니다.");
+assert.match(sw, /ccb-v1\.7\.5/u, "서비스워커 캐시 버전이 v1.7.5이어야 합니다.");
 assert.match(app, /register\("sw\.js", \{ updateViaCache: "none" \}\)/u, "SW 갱신 확인은 HTTP 캐시를 우회해야 합니다.");
 assert.match(sw, /isUpdate[\s\S]*clients\.matchAll[\s\S]*client\.navigate/u, "기존 캐시 갱신 시 열린 앱을 최신 화면으로 다시 불러와야 합니다.");
 
