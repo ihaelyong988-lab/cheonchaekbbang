@@ -29,4 +29,16 @@ for (const benchmark of cases) {
 assert.deepEqual(search("a"), [], "두 글자 미만 입력은 검색하지 않아야 합니다.");
 assert.deepEqual(search("어떻게 무엇 왜"), [], "핵심 낱말이 없는 질문은 임의 추천하지 않아야 합니다.");
 
+// 경계 개선 회귀 (v1.7.4): 2자 핵심어 절단·의문 조각·조사 정규화
+assert.ok(
+  search("정의").slice(0, 5).map((item) => item.book.title).includes("정의란 무엇인가"),
+  "2자 핵심어 '정의'는 조사 과다절단으로 빈 결과가 되면 안 됩니다."
+);
+assert.deepEqual(search("하는가"), [], "의문 조각 '하는가'는 임의 추천하지 않아야 합니다.");
+assert.deepEqual(
+  search("정의란").map((item) => item.book.title),
+  search("정의").map((item) => item.book.title),
+  "'정의란'은 '정의'와 동일한 결과여야 합니다(란/이란 조사 정규화)."
+);
+
 console.log(JSON.stringify({ result: "pass", benchmarks: cases.length, maxResults: 8 }, null, 2));
