@@ -11,7 +11,7 @@ const assets = {
   "data/celeb-books-2025.js": "verified-correction",
   "lib/search.js": "createQuestionSearch",
   "manifest.webmanifest": '"standalone"',
-  "sw.js": "ccb-v1.7.3",
+  "sw.js": "ccb-v1.7.4",
 };
 
 for (const [asset, marker] of Object.entries(assets)) {
@@ -82,7 +82,7 @@ try {
       await page.locator("#question-search").fill("돈과 투자는 어떻게 판단해야 하는가");
       await page.locator("#question-search-form").evaluate((form) => form.requestSubmit());
       assert.ok(await page.getByText("현명한 투자자", { exact: true }).count() > 0, "운영 질문 검색 실패");
-      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.7.3"), "운영 SW 캐시 버전 불일치");
+      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.7.4"), "운영 SW 캐시 버전 불일치");
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
       assert.equal(await page.locator('.tab[aria-current="page"] span').textContent(), "홈", "운영 오프라인 reload 실패");
@@ -104,6 +104,6 @@ console.log(JSON.stringify({
   books: 175,
   questions: 590,
   siteName: "천책빵",
-  cache: "ccb-v1.7.3",
+  cache: "ccb-v1.7.4",
   offline: true,
 }, null, 2));
