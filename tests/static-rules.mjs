@@ -54,7 +54,7 @@ for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), 
 for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
-assert.match(sw, /ccb-v1\.7\.5/u, "서비스워커 캐시 버전이 v1.7.5이어야 합니다.");
+assert.match(sw, /ccb-v1\.8\.0/u, "서비스워커 캐시 버전이 v1.8.0이어야 합니다.");
 assert.match(app, /register\("sw\.js", \{ updateViaCache: "none" \}\)/u, "SW 갱신 확인은 HTTP 캐시를 우회해야 합니다.");
 assert.match(sw, /isUpdate[\s\S]*clients\.matchAll[\s\S]*client\.navigate/u, "기존 캐시 갱신 시 열린 앱을 최신 화면으로 다시 불러와야 합니다.");
 
@@ -72,4 +72,28 @@ assert.match(celeb, /장바구니 시트는 읽기 대상과 앱 데이터에서
 assert.match(app, /textContent\s*=\s*state\.profile/u, "프로필은 textContent로 출력해야 합니다.");
 assert.match(app, /myAnswer:\s*typeof item\.myAnswer.*slice\(0, 10000\)/u, "저장 답변 길이 방어 누락");
 
-console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true }, null, 2));
+/* v1.8.0 §11-3 — 상단 브랜드 = 첫 화면 복귀 버튼 (템플릿 고정) */
+assert.match(html, /<h1 class="brand"><button class="brand-btn" data-home="1" aria-label="첫 화면으로">천책빵<\/button><\/h1>/u,
+  "상단 브랜드는 data-home 첫 화면 복귀 버튼이어야 합니다.");
+assert.match(css, /\.brand-btn\s*\{[^}]*min-height:\s*44px/u, "브랜드 홈 버튼 44px 세로 게이트 누락");
+assert.match(css, /\.brand-btn\s*\{[^}]*min-width:\s*44px/u, "브랜드 홈 버튼 44px 가로 게이트 누락");
+assert.match(app, /function goHome\(\)\s*\{/u, "첫 화면 복귀 단일 진입점 goHome 누락");
+assert.match(app, /history\.go\(-d\)/u, "goHome은 히스토리 위치를 index 0으로 되돌려야 합니다.");
+assert.match(app, /if \(t\.dataset\.home\)[\s\S]{0,60}goHome\(\)/u, "브랜드 버튼 클릭이 goHome으로 연결되지 않았습니다.");
+assert.match(app, /t\.dataset\.tab === "question"[\s\S]{0,60}goHome\(\)/u, "홈 탭 클릭이 goHome으로 통일되지 않았습니다.");
+
+/* v1.8.0 §11-1 — 홈 스트립 문맥 전환 마커 */
+assert.match(app, /function stepsToRoot\(book\)\s*\{/u, "뿌리 거리 단일 헬퍼 stepsToRoot 누락");
+assert.equal((app.match(/function stepsToRoot\(/gu) || []).length, 1, "stepsToRoot는 단일 헬퍼여야 합니다.");
+assert.match(app, /const bookSteps = stepsToRoot\(b\)/u, "홈 스트립은 stepsToRoot로만 뿌리 거리를 계산해야 합니다.");
+assert.match(app, /class="qstat is-ctx\$\{flip\}" data-tab="record"[\s\S]{0,120}<span>수집한 질문<\/span>/u,
+  "스트립 2번 칸은 문맥 전환·기록 탭 링크·라벨 `수집한 질문`을 유지해야 합니다.");
+assert.match(app, /class="qstat is-ctx\$\{flip\}" data-tab="lineage"[\s\S]{0,140}<span>뿌리까지<\/span>/u,
+  "스트립 3번 칸은 문맥 전환·계보 탭 링크·라벨 `뿌리까지`를 유지해야 합니다.");
+assert.match(app, /bookSteps === 0 \? "도달"/u, "뿌리 책은 `도달`로 표시해야 합니다.");
+assert.equal((app.match(/is-ctx/gu) || []).length, 2, "문맥 전환은 스트립 2·3번 칸에만 적용해야 합니다.");
+assert.match(css, /@media \(prefers-reduced-motion: no-preference\)[\s\S]{0,240}qstat-swap/u,
+  "스트립 전환 효과는 prefers-reduced-motion을 존중해야 합니다.");
+assert.match(css, /animation: qstat-swap 1[0-2]\dms/u, "스트립 전환은 120ms 이내여야 합니다.");
+
+console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true }, null, 2));
