@@ -32,6 +32,24 @@ const BY_ID = new Map(ALL.map((b) => [b.id, b]));
 const TIER_ORDER = { root: 0, trunk: 1, branch: 2 };
 const TIER_KO = { root: "뿌리", trunk: "줄기", branch: "가지" };
 
+/* ── 뿌리까지의 거리 (단일 헬퍼 · roots[0] 체인) ───── */
+// 뿌리면 0. 순환·고아·50홉 초과는 그 시점까지의 홉 수를 반환해 NaN/무한루프를 만들지 않는다.
+// (validateBooks가 도달 불가 책을 이미 제거하므로 방어 분기는 실전에서 도달하지 않는다.)
+function stepsToRoot(book) {
+  if (!book || book.tier === "root") return 0;
+  let cur = book, steps = 0;
+  const seen = new Set([book.id]);
+  while (steps < 50) {
+    const parent = BY_ID.get(cur.roots?.[0]);
+    if (!parent || seen.has(parent.id)) return steps;   // 고아 · 순환 방어
+    steps += 1;
+    if (parent.tier === "root") return steps;           // 뿌리 도달
+    seen.add(parent.id);
+    cur = parent;
+  }
+  return steps;                                          // 50홉 상한 방어
+}
+
 /* ── 사용자 상태 (localStorage) ─────────────────────── */
 const STORE_KEY = "cheonchaek.v1";
 const STORE_VERSION = 2;
@@ -179,6 +197,7 @@ function drawQuestion() {
 }
 
 let heroQuestion = drawQuestion();
+let lastStripKey = null;   // 홈 스트립 2·3번 칸 문맥 전환 감지 (책·수집수 변화 시에만 애니메이션)
 
 /* ── 내비게이션: 히스토리 스택 + 종료 트랩 (PRD F8, §6) ── */
 let stack = [{ tab: "question", overlay: null }];
@@ -232,6 +251,7 @@ window.addEventListener("popstate", (e) => {
   if (appClosed) return;
   const i = e.state && typeof e.state.i === "number" ? e.state.i : -1;
   if (i < 0) {
+    clearHomeNav(); pendingHomeScroll = false;        // 센티널 진입 시 홈 복귀 잠금 해제
     exitReturnInProgress = true;
     showExit();
     history.forward();                                // 팝업 중 반복 뒤로가기로 앱을 벗어나지 않게 복귀
@@ -239,7 +259,7 @@ window.addEventListener("popstate", (e) => {
   }
   if (exitReturnInProgress && i === 0) {
     exitReturnInProgress = false;
-    if (!exitEl.hidden) return;
+    if (!exitEl.hidden) { clearHomeNav(); pendingHomeScroll = false; return; }
   }
   hideExit();
   const hadOverlay = Boolean(top().overlay);
@@ -248,6 +268,11 @@ window.addEventListener("popstate", (e) => {
   render();
   if (hadOverlay && !top().overlay && overlayReturnFocus) {
     requestAnimationFrame(restoreOverlayFocus);
+  }
+  clearHomeNav();                                     // 도착 시 잠금 해제
+  if (pendingHomeScroll) {                            // render→포커스 복귀 뒤에 스크롤
+    pendingHomeScroll = false;
+    requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, 0)));
   }
 });
 
@@ -276,6 +301,29 @@ function hideExit() {
 
 function stayAtHome() {
   hideExit();
+}
+
+/* ── 첫 화면 복귀 goHome (v1.8.0 §11-3) ───────────── */
+let homeNavInProgress = false;   // go(-d) 비동기 구간 중복 호출 잠금
+let pendingHomeScroll = false;   // popstate·render 이후로 미룬 최상단 스크롤
+let homeNavTimer = 0;
+
+function clearHomeNav() {
+  homeNavInProgress = false;
+  if (homeNavTimer) { clearTimeout(homeNavTimer); homeNavTimer = 0; }
+}
+
+function goHome() {
+  if (appClosed) return;                    // 닫힘 화면 이후 무동작
+  if (!exitEl.hidden) return;               // 종료 팝업 표시 중
+  if (exitReturnInProgress) return;         // 센티널 복귀(forward) 대기 중
+  if (homeNavInProgress) return;            // 연속 탭
+  const d = stack.length - 1;
+  if (d <= 0) { scrollPageTop(); return; }  // 이미 첫 화면(=인덱스 0, 오버레이 없음)
+  homeNavInProgress = true;
+  pendingHomeScroll = true;
+  homeNavTimer = setTimeout(clearHomeNav, 700); // popstate 미도달 대비 안전 해제
+  history.go(-d);                           // 히스토리 위치를 index 0으로 되돌림(센티널 보존)
 }
 
 document.getElementById("exit-stay").addEventListener("click", stayAtHome);
@@ -439,6 +487,14 @@ function renderQuestion() {
 
   const qLen = item.q.text.length; // 2줄 고정 — 길이에 따라 글자만 압축, 박스 높이 불변
   const qSize = qLen <= 22 ? "" : qLen <= 29 ? " q-mid" : qLen <= 40 ? " q-long" : " q-xlong";
+
+  const bookQCount = b ? b.questions.length : 0;
+  const bookQCollected = state.questions.filter((x) => x.bookId === item.bookId).length;
+  const bookSteps = stepsToRoot(b);
+  const stripKey = `${item.bookId}:${bookQCollected}`;
+  const flip = lastStripKey !== null && lastStripKey !== stripKey ? " q-flip" : "";
+  lastStripKey = stripKey;
+
   viewEl.innerHTML = `
     <section aria-label="오늘의 질문">
       <div class="q-card">
@@ -450,8 +506,8 @@ function renderQuestion() {
         </div>
         <div class="q-stats" role="group" aria-label="나의 기록">
           <button class="qstat" data-tab="record"><b>${state.read.length}<small>/${ALL.length}</small></b><span>읽은 책</span></button>
-          <button class="qstat" data-tab="record"><b>${state.questions.length}</b><span>수집한 질문</span></button>
-          <button class="qstat" data-tab="lineage"><b>${state.rootArrivals}</b><span>뿌리 도달</span></button>
+          <button class="qstat is-ctx${flip}" data-tab="record"><b>${bookQCollected}<small>/${bookQCount}</small></b><span>수집한 질문</span></button>
+          <button class="qstat is-ctx${flip}" data-tab="lineage"><b>${bookSteps === 0 ? "도달" : `${bookSteps}단계`}</b><span>뿌리까지</span></button>
           <button class="qstat" data-open-jlist="1"><b>${state.journeysDone.length}<small>/${JOURNEYS.length}</small></b><span>여정 완료</span></button>
         </div>
       </div>
@@ -774,10 +830,12 @@ function scrollPageTop() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
   if (!t) return;
 
-  if (t.dataset.toggleTheme) {
+  if (t.dataset.home) {
+    goHome();
+  } else if (t.dataset.toggleTheme) {
     state.theme = state.theme === "navy" ? "silver" : "navy";
     applyTheme();
     save();
@@ -797,13 +855,10 @@ document.addEventListener("click", (e) => {
     save();
     history.back();
   } else if (t.dataset.tab) {
+    if (t.dataset.tab === "question") { goHome(); return; }   // 홈 탭 = 첫 화면 복귀로 통일
     const cur = top();
-    if (cur.tab === t.dataset.tab && !cur.overlay) {
-      if (cur.tab === "question") scrollPageTop();
-      return;
-    }
+    if (cur.tab === t.dataset.tab && !cur.overlay) return;
     pushView({ tab: t.dataset.tab, overlay: null });
-    if (t.dataset.tab === "question") scrollPageTop();
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
