@@ -201,11 +201,23 @@ function drawQuestion() {
 let heroQuestion = drawQuestion();
 let lastStripKey = null;   // 홈 스트립 2·3번 칸 문맥 전환 감지 (책·수집수 변화 시에만 애니메이션)
 
-/* ── 내비게이션: 히스토리 스택 + 종료 트랩 (PRD F8, §6) ── */
-let stack = [{ tab: "question", overlay: null }];
+/* ── 내비게이션: 히스토리 포인터 + 종료 트랩 (PRD F8, §6) ── */
 const HASH = { question: "#question", lineage: "#lineage", library: "#library", record: "#record" };
-history.replaceState({ i: -1 }, "");                 // 종료 트랩(센티널)
-history.pushState({ i: 0 }, "", HASH.question);      // 기본 화면
+const TAB_BY_HASH = new Map(Object.entries(HASH).map(([tab, hash]) => [hash, tab]));
+const OVERLAY_TYPES = new Set(["sheet", "trail", "jlist", "jdetail", "profile"]);
+// 진입 해시가 탭을 지정하면 그 탭으로 부팅한다. 미지 해시는 홈으로 폴백하되 요청 주소는 그대로 둔다(§6-5).
+const bootTab = TAB_BY_HASH.get(location.hash) || "question";
+const bootHomeUrl = bootTab === "question" ? location.hash || HASH.question : HASH.question;
+let currentView = { tab: "question", overlay: null };
+let pointer = 0;                                  // 히스토리 위치 = state.i. 항목을 잘라내지 않는다(N-2)
+history.replaceState({ sentinel: true }, "");     // 종료 트랩(센티널) — 고유 값으로만 식별한다(N-1)
+history.pushState({ i: 0, view: currentView }, "", bootHomeUrl);   // 기본 화면
+if (bootTab !== "question") {
+  // 딥링크 탭은 홈 항목 위에 올린다 — 진입 직후 뒤로가기가 종료가 아니라 홈으로 가야 한다(§6-3).
+  currentView = { tab: bootTab, overlay: null };
+  pointer = 1;
+  history.pushState({ i: 1, view: currentView }, "", HASH[bootTab]);
+}
 const exitEl = document.getElementById("exit-dialog");
 const exitBackground = [".topbar", "#view", ".tabbar", "#overlay-root"]
   .map((selector) => document.querySelector(selector));
@@ -241,13 +253,40 @@ function setOverlayBackgroundInert(inert) {
   document.body.classList.toggle("has-overlay", inert);
 }
 
+// 히스토리 페이로드의 뷰를 렌더 가능한 값으로 좁힌다. 되살릴 수 없는 오버레이는 버려 배경만 잠긴 화면을 막는다.
+function normalizeView(view) {
+  const tab = view && HASH[view.tab] ? view.tab : "question";
+  const overlay = view?.overlay;
+  if (!overlay || !OVERLAY_TYPES.has(overlay.type)) return { tab, overlay: null };
+  if (overlay.type === "sheet" || overlay.type === "trail") {
+    return BY_ID.has(overlay.bookId)
+      ? { tab, overlay: { type: overlay.type, bookId: overlay.bookId } }
+      : { tab, overlay: null };
+  }
+  if (overlay.type === "jdetail" && !state.journey) return { tab, overlay: null };
+  return { tab, overlay: { type: overlay.type } };
+}
+
+// 계약 형식이면 그대로 읽고, 미지 항목은 센티널로 접지 않고 현재 주소 기준으로 재구성한다(N-1·N-3).
+function readEntry(raw) {
+  if (raw && typeof raw.i === "number" && raw.i >= 0 && raw.view) {
+    return { i: raw.i, view: normalizeView(raw.view), known: true };
+  }
+  return {
+    i: pointer + 1,
+    view: { tab: TAB_BY_HASH.get(location.hash) || currentView.tab, overlay: null },
+    known: false,
+  };
+}
+
 function pushView(view) {
   if (view.overlay && !top().overlay) overlayReturnFocus = rememberFocus(document.activeElement);
-  stack.push(view);
-  history.pushState({ i: stack.length - 1 }, "", HASH[view.tab]);
+  currentView = view;
+  pointer += 1;
+  history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
   render();
 }
-function top() { return stack[stack.length - 1]; }
+function top() { return currentView; }
 
 /* ── 오버레이 닫힘 단일 경로 (§6-4 N-5·N-6·N-7) ────── */
 let overlayDismissing = false;   // history.back() 비동기 구간 재진입 잠금
@@ -275,26 +314,32 @@ function dismissOverlay() {
 window.addEventListener("popstate", (e) => {
   if (appClosed) return;
   overlayDismissing = false;                          // 도착 시 해제 — 조기 return 앞에 두어 고착을 막는다(N-6)
-  const i = e.state && typeof e.state.i === "number" ? e.state.i : -1;
-  if (i < 0) {
+  if (e.state?.closed) return;                        // 닫힘 표식 항목은 뷰 재구성 대상이 아니다
+  if (e.state?.sentinel === true) {
     clearHomeNav(); pendingHomeScroll = false;        // 센티널 진입 시 홈 복귀 잠금 해제
     exitReturnInProgress = true;
     showExit();
     history.forward();                                // 팝업 중 반복 뒤로가기로 앱을 벗어나지 않게 복귀
     return;
   }
-  if (exitReturnInProgress && i === 0) {
+  const entry = readEntry(e.state);
+  if (exitReturnInProgress && entry.i === 0) {
     exitReturnInProgress = false;
     if (!exitEl.hidden) { clearHomeNav(); pendingHomeScroll = false; return; }
   }
   hideExit();
   const hadOverlay = Boolean(top().overlay);
-  stack = stack.slice(0, i + 1);
-  if (stack.length === 0) stack = [{ tab: "question", overlay: null }];
+  // 앞으로가기로 오버레이가 되살아나는 경로에도 복귀 지점을 남긴다(원장 14 정합).
+  if (entry.view.overlay && !hadOverlay && !overlayReturnFocus) {
+    overlayReturnFocus = rememberFocus(document.activeElement);
+  }
+  pointer = entry.i;
+  currentView = entry.view;
+  if (!entry.known) history.replaceState({ i: pointer, view: currentView }, "");   // 미지 항목 인덱스 재기입(N-3)
   render();
   if (hadOverlay && !top().overlay) {
     lockTabbar();                                     // 해제 직후 배경 탭바 잠금(N-7)
-    if (overlayReturnFocus) requestAnimationFrame(restoreOverlayFocus);
+    requestAnimationFrame(restoreOverlayFocus);
   }
   clearHomeNav();                                     // 도착 시 잠금 해제
   if (pendingHomeScroll) {                            // render→포커스 복귀 뒤에 스크롤
@@ -345,7 +390,7 @@ function goHome() {
   if (!exitEl.hidden) return;               // 종료 팝업 표시 중
   if (exitReturnInProgress) return;         // 센티널 복귀(forward) 대기 중
   if (homeNavInProgress) return;            // 연속 탭
-  const d = stack.length - 1;
+  const d = pointer;                        // 인덱스 0까지의 거리
   if (d <= 0) { scrollPageTop(); return; }  // 이미 첫 화면(=인덱스 0, 오버레이 없음)
   homeNavInProgress = true;
   pendingHomeScroll = true;
@@ -871,6 +916,32 @@ function renderProfile() {
   overlayRoot.querySelector(".sheet").focus();
 }
 
+/* ── 배포 갱신 통지 수신 (§6-3, 원장 12) ───────────── */
+let updateReady = false;
+
+// 통지를 받자마자 reload 하면 읽던 자리와 히스토리를 잃는다. 안전한 시점에만 안내를 띄운다.
+function updateMomentSafe() {
+  if (!exitEl.hidden) return false;                              // 종료 팝업 표시 중
+  if (top().overlay) return false;                               // 오버레이 표시 중
+  const focused = document.activeElement;
+  return !(focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement);   // 입력 중
+}
+
+function updateNoticeHtml() {
+  return `
+    <div class="notice" role="status">
+      <p>새 버전을 받았습니다.</p>
+      <button class="btn btn-light" data-apply-update="1">지금 적용하기</button>
+    </div>`;
+}
+
+// 홈은 히어로 질문 다음에 끼운다 — 최상단은 질문 카드 자리다(INV-1). 다른 탭은 화면 첫머리에 둔다.
+function insertUpdateNotice() {
+  const hero = viewEl.querySelector(".q-card")?.closest("section");
+  if (hero) hero.insertAdjacentHTML("afterend", updateNoticeHtml());
+  else viewEl.insertAdjacentHTML("afterbegin", updateNoticeHtml());
+}
+
 /* ── 전체 렌더 ─────────────────────────────────────── */
 function render() {
   const v = top();
@@ -883,6 +954,7 @@ function render() {
   else if (v.tab === "lineage") renderLineage();
   else if (v.tab === "library") renderLibrary();
   else renderRecord();
+  if (updateReady && updateMomentSafe()) insertUpdateNotice();
 
   if (!v.overlay) overlayRoot.innerHTML = "";
   else if (v.overlay.type === "sheet") renderSheet(v.overlay.bookId);
@@ -905,11 +977,14 @@ function scrollPageTop() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay]");
   if (!t) return;
 
   if (t.dataset.home) {
     goHome();
+  } else if (t.dataset.applyUpdate) {
+    t.disabled = true;                        // 확인은 1회만 받는다
+    location.reload();
   } else if (t.dataset.toggleTheme) {
     state.theme = state.theme === "navy" ? "silver" : "navy";
     applyTheme();
@@ -1074,5 +1149,11 @@ render();
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js", { updateViaCache: "none" });
+  });
+  // 서비스워커는 갱신 사실만 통지한다. 적용 시점은 방문자가 고른다(원장 12).
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type !== "ccb-updated" || updateReady) return;
+    updateReady = true;
+    if (updateMomentSafe()) render();
   });
 }

@@ -30,6 +30,9 @@ function findBrowser() {
   return executablePath;
 }
 
+// G-14 는 캐시 버전이 다른 워커를 올려야 한다. 저장소 sw.js 를 고치지 않고 응답 바이트만 바꾼다.
+let swCacheSuffix = "";
+
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -38,7 +41,10 @@ const server = createServer(async (request, response) => {
       : decodeURIComponent(url.pathname).slice(1);
     const filePath = path.resolve(ROOT, relative);
     assert.ok(filePath.startsWith(`${ROOT}${path.sep}`), "허용되지 않은 경로입니다.");
-    const body = await readFile(filePath);
+    let body = await readFile(filePath);
+    if (swCacheSuffix && path.basename(filePath) === "sw.js") {
+      body = String(body).replace(/(const CACHE = "ccb-[^"]*)"/u, `$1${swCacheSuffix}"`);
+    }
     response.writeHead(200, {
       "Cache-Control": "no-store",
       "Content-Type": MIME[path.extname(filePath)] || "application/octet-stream"
@@ -159,7 +165,21 @@ try {
   });
   assert.deepEqual(catalog, { books: 175, questions: 590, literature: 64 });
 
-  const questionLineFailures = await page.evaluate(async () => {
+  /* [§4-4 임계 단일 출처] 글자수 버킷은 app.js 의 매핑을 읽어 그대로 쓴다.
+     테스트가 값을 따로 적으면 앱이 압축 단계를 바꿀 때 옛 버킷으로 재어 거짓 통과한다. */
+  const heroBucketSource = (await readFile(path.resolve(ROOT, "app.js"), "utf8")).match(/const qSize\s*=\s*([^;]+);/u);
+  assert.ok(heroBucketSource, "app.js 에서 히어로 질문 글꼴 버킷 매핑(const qSize)을 찾지 못했습니다.");
+  const heroBuckets = [...heroBucketSource[1].matchAll(/<=\s*(\d+)\s*\?\s*"([^"]*)"/gu)]
+    .map(([, limit, className]) => ({ limit: Number(limit), className }));
+  const heroFallbackClass = heroBucketSource[1].match(/:\s*"([^"]*)"\s*$/u)?.[1] ?? "";
+  assert.ok(heroBuckets.length >= 1, "히어로 질문 글꼴 버킷 임계를 추출하지 못했습니다.");
+  assert.deepEqual(
+    heroBuckets.map((bucket) => bucket.limit),
+    [...heroBuckets.map((bucket) => bucket.limit)].sort((a, z) => a - z),
+    "히어로 글꼴 버킷 임계가 오름차순이 아닙니다."
+  );
+
+  const questionLineProbe = await page.evaluate(async ({ buckets, fallbackClass }) => {
     const { BOOKS } = await import("./data/books.js");
     const original = document.querySelector(".q-text");
     const probe = original.cloneNode(true);
@@ -174,20 +194,33 @@ try {
     span.style.overflow = "visible";
     document.body.append(probe);
     const failures = [];
+    const stats = new Map();
     for (const book of BOOKS) {
       for (const question of book.questions) {
         const length = question.text.length;
-        probe.className = `q-text${length <= 22 ? "" : length <= 29 ? " q-mid" : length <= 40 ? " q-long" : " q-xlong"}`;
+        const bucket = buckets.find((item) => length <= item.limit);
+        const className = bucket ? bucket.className : fallbackClass;
+        probe.className = `q-text${className}`;
         span.textContent = question.text;
-        const lineHeight = Number.parseFloat(getComputedStyle(probe).lineHeight);
-        const lines = Math.ceil((span.getBoundingClientRect().height - 0.5) / lineHeight);
+        const style = getComputedStyle(probe);
+        const lineHeight = Number.parseFloat(style.lineHeight);
+        const height = span.getBoundingClientRect().height;
+        const lines = Math.ceil((height - 0.5) / lineHeight);
         if (lines > 2) failures.push({ bookId: book.id, text: question.text, lines });
+        const key = className.trim() || "q-text";
+        const row = stats.get(key)
+          || { bucket: key, fontSize: style.fontSize, count: 0, twoLines: 0, maxLines: 0, maxLength: 0 };
+        row.count += 1;
+        if (lines === 2) row.twoLines += 1;      // 2줄 상한에 붙은 건수 = 글꼴 확대 시 먼저 넘치는 모집단
+        row.maxLines = Math.max(row.maxLines, lines);
+        row.maxLength = Math.max(row.maxLength, length);
+        stats.set(key, row);
       }
     }
     probe.remove();
-    return failures;
-  });
-  assert.deepEqual(questionLineFailures, []);
+    return { failures, buckets: [...stats.values()] };
+  }, { buckets: heroBuckets, fallbackClass: heroFallbackClass });
+  assert.deepEqual(questionLineProbe.failures, [], "히어로 질문 박스에서 2줄을 넘긴 질문이 있습니다(INV-9).");
 
   await page.locator("#theme-btn").click();
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "navy");
@@ -397,6 +430,294 @@ try {
     await auditContext.close();
   }
 
+  /* ── 라운드 2 신설 게이트 (§11-2 G-1 · G-7 · G-14 · G-2) ──────────
+     본 시나리오는 닫힘 화면에서 문서를 교체하므로 신설 게이트는 각자 새 컨텍스트에서 돈다.
+     컨텍스트마다 §3-0 P-2 전처리(SW 전량 unregister + 캐시 전삭제 후 재로드)를 적용한다.
+     실행 순서는 G-2 를 마지막에 둔다 — 미해결 조항 하나가 나머지 세 조항의 판정을 가리지 않게 한다. */
+  const TAB_BY_HASH = { "#question": "홈", "#lineage": "계보", "#library": "서재", "#record": "기록" };
+
+  async function openProbe(hash = "") {
+    const probeContext = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 390, height: 844 },
+    });
+    const probePage = await probeContext.newPage();
+    const probeErrors = [];
+    probePage.on("console", (message) => {
+      if (["error", "warning"].includes(message.type())) probeErrors.push(`${message.type()}: ${message.text()}`);
+    });
+    probePage.on("pageerror", (error) => probeErrors.push(`pageerror: ${error.message}`));
+    await probePage.goto(`${baseURL}/${hash}`, { waitUntil: "networkidle" });
+    await probePage.evaluate(async () => {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((name) => caches.delete(name)));
+    });
+    await probePage.reload({ waitUntil: "networkidle" });
+    await probePage.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+    await probePage.reload({ waitUntil: "networkidle" });
+    return { probeContext, probePage, probeErrors };
+  }
+
+  async function currentTab(target) {
+    return target.locator(".tab[aria-current=page] span").textContent();
+  }
+
+  async function countComposition(target) {
+    return target.evaluate(() => ({ ...window.__composition }));
+  }
+
+  async function composeKorean(session, target, steps, commit) {
+    await target.evaluate(() => { window.__composition = { start: 0, end: 0 }; });
+    for (const step of steps) {
+      await session.send("Input.imeSetComposition", {
+        text: step,
+        selectionStart: step.length,
+        selectionEnd: step.length,
+      });
+    }
+    await session.send("Input.insertText", { text: commit });   // 조합 확정
+    await target.waitForTimeout(260);
+  }
+
+  /* [G-1] 서재 검색 한글 IME 조합 — 조합 결과가 그대로 남고 결과가 나온다 (원장 1) */
+  const ime = await openProbe();
+  const imeSession = await ime.probeContext.newCDPSession(ime.probePage);
+  await ime.probePage.evaluate(() => {
+    window.__composition = { start: 0, end: 0 };
+    document.addEventListener("compositionstart", () => { window.__composition.start += 1; }, true);
+    document.addEventListener("compositionend", () => { window.__composition.end += 1; }, true);
+  });
+  await ime.probePage.locator('.tab[data-tab="library"]').click();
+  await ime.probePage.locator("#lib-search").click();
+  await composeKorean(imeSession, ime.probePage, ["ㄴ", "노", "노인"], "노인");
+  assert.equal(await ime.probePage.locator("#lib-search").inputValue(), "노인", "서재 검색 입력값이 IME 조합 결과와 다릅니다.");
+  assert.ok(await ime.probePage.locator(".view > .card").count() >= 1, "IME 조합으로 입력한 제목의 결과 카드가 0장입니다.");
+  assert.equal(await ime.probePage.locator(".library-summary").isVisible(), true, "서재 요약줄이 사라졌습니다.");
+  assert.deepEqual(await countComposition(ime.probePage), { start: 1, end: 1 }, "서재 검색의 조합 이벤트가 1회·1회가 아닙니다.");
+
+  /* 대조군 — 재렌더가 없는 홈 질문 검색은 처음부터 1회·1회다 */
+  await ime.probePage.locator('.tab[data-tab="question"]').click();
+  await ime.probePage.waitForTimeout(360);
+  await ime.probePage.locator("#question-search").click();
+  await composeKorean(imeSession, ime.probePage, ["ㄴ", "노", "논어"], "논어");
+  assert.equal(await ime.probePage.locator("#question-search").inputValue(), "논어", "홈 질문 검색 입력값이 IME 조합 결과와 다릅니다.");
+  assert.deepEqual(await countComposition(ime.probePage), { start: 1, end: 1 }, "홈 질문 검색의 조합 이벤트가 1회·1회가 아닙니다.");
+  assert.deepEqual(ime.probeErrors, [], "IME 게이트에서 런타임 오류가 발생했습니다.");
+  await ime.probeContext.close();
+
+  /* [G-7] 히스토리 페이로드 왕복 — URL 변경과 렌더 탭 변경이 1:1 (원장 6 · 13 · 14) */
+  const history7 = await openProbe();
+  await history7.probePage.evaluate(() => {
+    window.__popstates = [];
+    window.addEventListener("popstate", (event) => { window.__popstates.push(event.state); });
+  });
+
+  async function step(target, action) {
+    await target.evaluate(action);
+    await target.waitForTimeout(260);
+  }
+  const marks = [];
+  async function mark(target) {
+    marks.push({ url: target.url(), tab: await currentTab(target) });
+  }
+
+  for (const tab of ["lineage", "library", "record"]) {
+    await history7.probePage.locator(`.tab[data-tab="${tab}"]`).click();
+    await history7.probePage.waitForTimeout(160);
+  }
+  assert.equal(await currentTab(history7.probePage), "기록", "기록 탭까지 진행하지 못했습니다.");
+  await mark(history7.probePage);
+  for (let index = 0; index < 2; index += 1) {
+    await step(history7.probePage, () => history.back());
+    await mark(history7.probePage);
+  }
+  for (let index = 0; index < 3; index += 1) {
+    await step(history7.probePage, () => history.forward());
+    await mark(history7.probePage);
+  }
+  const urlChanges = marks.filter((item, index) => index > 0 && item.url !== marks[index - 1].url).length;
+  const tabChanges = marks.filter((item, index) => index > 0 && item.tab !== marks[index - 1].tab).length;
+  assert.equal(urlChanges, tabChanges, `URL 변경 ${urlChanges}회와 렌더 탭 변경 ${tabChanges}회가 다릅니다(N-2).`);
+  assert.equal(urlChanges, 4, `뒤로 2회·앞으로 3회의 URL 변경이 4회가 아닙니다(실측 ${urlChanges}회).`);
+  const forwardMark = marks[marks.length - 1];
+  assert.equal(
+    forwardMark.tab,
+    TAB_BY_HASH[new URL(forwardMark.url).hash],
+    `앞으로가기 후 렌더 탭이 URL 해시와 다릅니다(URL ${forwardMark.url} · 렌더 ${forwardMark.tab}).`
+  );
+  const payload = await history7.probePage.evaluate(() => history.state);
+  assert.equal(typeof payload?.i, "number", "history.state 에 인덱스가 없습니다.");
+  assert.equal(typeof payload?.view?.tab, "string", "history.state 에 뷰가 직렬화되지 않았습니다(N-2).");
+  assert.equal(payload.view.tab, new URL(forwardMark.url).hash.slice(1), "직렬화된 뷰의 탭이 URL 해시와 다릅니다.");
+  assert.ok("overlay" in payload.view, "직렬화된 뷰에 오버레이 슬롯이 없습니다.");
+
+  /* 센티널은 고유 값으로 식별된다 — 미지 state(null)와 같은 값으로 접히면 안 된다(N-1) */
+  for (let index = 0; index < 3; index += 1) await step(history7.probePage, () => history.back());
+  assert.equal(await currentTab(history7.probePage), "홈", "인덱스 0 으로 돌아오지 못했습니다.");
+  await step(history7.probePage, () => history.back());
+  assert.equal(await history7.probePage.locator("#exit-dialog").isVisible(), true, "센티널 진입에서 종료 팝업이 뜨지 않았습니다.");
+  // 센티널 도착 직후 앱이 history.forward() 로 되돌리므로 popstate 기록 전량에서 센티널 항목을 찾는다.
+  const popstateLog = await history7.probePage.evaluate(() => window.__popstates);
+  const sentinelHits = popstateLog.filter((entry) => entry?.sentinel === true);
+  assert.equal(sentinelHits.length, 1, `센티널 도착이 1회가 아닙니다(실측 ${sentinelHits.length}회).`);
+  assert.deepEqual(sentinelHits[0], { sentinel: true }, "센티널이 고유 값으로 식별되지 않습니다(N-1).");
+  assert.equal(
+    popstateLog.filter((entry) => entry === null).length,
+    0,
+    "일반 항목이 state 없이 기록됐습니다 — 미지 항목과 구분되지 않습니다(N-1)."
+  );
+  await history7.probePage.keyboard.press("Escape");
+  await history7.probePage.waitForTimeout(200);
+
+  /* 미지 state 는 센티널로 취급하지 않고 인덱스를 재기입한다(N-3) */
+  await history7.probePage.locator('.tab[data-tab="lineage"]').click();
+  await history7.probePage.waitForTimeout(200);
+  await step(history7.probePage, () => { location.hash = "#library"; });
+  await step(history7.probePage, () => history.back());
+  await step(history7.probePage, () => history.forward());
+  assert.equal(await history7.probePage.locator("#exit-dialog").isVisible(), false, "미지 state 진입에서 종료 팝업이 떴습니다(N-3).");
+  assert.equal(await history7.probePage.evaluate(() => document.querySelector(".topbar").inert), false, "미지 state 진입 후 상단바가 잠겼습니다.");
+  const rebuilt = await history7.probePage.evaluate(() => history.state);
+  assert.equal(typeof rebuilt?.i, "number", "미지 state 가 replaceState 로 재기입되지 않았습니다(N-3).");
+  assert.notEqual(rebuilt?.sentinel, true, "미지 state 가 센티널로 재기입됐습니다(N-1).");
+  assert.deepEqual(history7.probeErrors, [], "히스토리 게이트에서 런타임 오류가 발생했습니다.");
+  await history7.probeContext.close();
+
+  /* 해시 딥링크 — 요청 해시로 부팅하고 재기입하지 않는다(§6-5) */
+  const deepLink = await openProbe("#library");
+  assert.equal(await currentTab(deepLink.probePage), "서재", "해시 딥링크가 요청한 탭으로 부팅하지 않았습니다.");
+  assert.equal(deepLink.probePage.url(), `${baseURL}/#library`, "해시 딥링크의 최종 URL 이 요청 해시와 다릅니다.");
+  assert.deepEqual(deepLink.probeErrors, [], "해시 딥링크 게이트에서 런타임 오류가 발생했습니다.");
+  await deepLink.probeContext.close();
+
+  /* [G-14] 캐시 버전을 올린 워커 활성화 후 history.state 보존 (원장 12) */
+  const update = await openProbe();
+  assert.equal(await update.probePage.evaluate(() => Boolean(navigator.serviceWorker.controller)), true, "갱신 시험 전 워커가 제어 중이 아닙니다.");
+  await update.probePage.locator('.tab[data-tab="library"]').click();
+  await update.probePage.waitForTimeout(200);
+  const beforeUpdate = {
+    state: await update.probePage.evaluate(() => history.state),
+    url: update.probePage.url(),
+    tab: await currentTab(update.probePage),
+  };
+  // 통지 도달은 앱이 렌더한 확인 컨트롤로 판정한다. 프로브가 startMessages() 로 큐를 열면
+  // 앱의 수신 경로가 막혀 있어도 통과해 버린다.
+  await update.probePage.evaluate(() => { window.__aliveMark = 1; });   // 재로드되면 사라진다
+  swCacheSuffix = "-probe";
+  let updateActivated = false;    // 구 캐시가 지워지면 신 워커 activate 가 끝난 것이다
+  let updateNotified = false;
+  let updateReloaded = false;
+  try {
+    await update.probePage.evaluate(async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      await registration.update();
+    });
+    for (let attempt = 0; attempt < 80 && !(updateActivated && updateNotified) && !updateReloaded; attempt += 1) {
+      const snapshot = await update.probePage.evaluate(async () => ({
+        keys: await caches.keys(),
+        alive: window.__aliveMark ?? null,
+        notices: document.querySelectorAll("[data-apply-update]").length,
+      }));
+      updateReloaded = snapshot.alive === null;
+      updateActivated = snapshot.keys.length > 0 && snapshot.keys.every((key) => key.endsWith("-probe"));
+      updateNotified = snapshot.notices > 0;
+      if (!(updateActivated && updateNotified) && !updateReloaded) await update.probePage.waitForTimeout(250);
+    }
+  } finally {
+    swCacheSuffix = "";
+  }
+  await update.probePage.waitForTimeout(600);   // 통지 수신 후 뒤늦은 강제 재로드까지 관측한다
+  assert.equal(updateReloaded, false, "갱신 통지 직후 사용자 확인 없이 재로드했습니다(§6-3).");
+  assert.equal(await update.probePage.evaluate(() => window.__aliveMark), 1, "갱신 통지 직후 사용자 확인 없이 재로드했습니다(§6-3).");
+  assert.ok(updateActivated, "캐시 버전을 올린 워커가 활성화되지 않았습니다(구 캐시가 남아 있습니다).");
+  assert.ok(updateNotified, "워커 갱신 통지가 앱에 도달하지 않았습니다(적용 확인 컨트롤 0건).");
+  assert.equal(await update.probePage.locator("[data-apply-update]").count(), 1, "적용 확인 컨트롤이 1개가 아닙니다.");
+  assert.deepEqual(await update.probePage.evaluate(() => history.state), beforeUpdate.state, "워커 갱신 후 history.state 가 보존되지 않았습니다.");
+  assert.equal(await update.probePage.locator("#exit-dialog").isVisible(), false, "워커 갱신 후 종료 팝업이 떴습니다.");
+  assert.equal(update.probePage.url(), beforeUpdate.url, "워커 갱신 후 URL 이 어긋났습니다.");
+  assert.equal(await currentTab(update.probePage), beforeUpdate.tab, "워커 갱신 후 렌더 탭이 바뀌었습니다.");
+  assert.deepEqual(update.probeErrors, [], "워커 갱신 게이트에서 런타임 오류가 발생했습니다.");
+  await update.probeContext.close();
+
+  /* [G-2] 여정 완료 이중 실행 — 기록 1건, 팝업 비표시, 탭 유지, 다른 여정 미시작 (원장 4) */
+  const journey = await openProbe();
+  const journeyMatrix = [];
+  const journeyModes = ["task", 0, 80, 150, 250];
+
+  async function closeAllOverlays(target) {
+    for (let attempt = 0; attempt < 5 && await target.locator("#overlay-root .sheet").count() > 0; attempt += 1) {
+      await target.keyboard.press("Escape");
+      await target.waitForTimeout(240);
+    }
+  }
+
+  async function storedState(target) {
+    return target.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1") || "{}"));
+  }
+
+  for (const mode of journeyModes) {
+    await closeAllOverlays(journey.probePage);
+    await journey.probePage.locator("[data-open-jlist]").first().click();
+    await journey.probePage.waitForTimeout(160);
+    await journey.probePage.locator("[data-start-journey]:not([disabled])").first().click();
+    await journey.probePage.waitForTimeout(200);
+    const boxes = journey.probePage.locator("[data-jcheck]");
+    const boxCount = await boxes.count();
+    assert.ok(boxCount >= 4, `여정 상세의 체크 항목이 ${boxCount}개입니다.`);
+    for (let index = 0; index < boxCount; index += 1) {
+      await boxes.nth(index).check();
+      await journey.probePage.waitForTimeout(70);
+    }
+    const finish = journey.probePage.locator("[data-finish-journey]");
+    await finish.waitFor();
+    await journey.probePage.locator("#j-answer").fill(`이중 실행 시험 ${mode}`);
+    const before = await storedState(journey.probePage);
+    if (mode === "task") {
+      await finish.evaluate((element) => { element.click(); element.click(); });   // 동일 태스크 2회 호출
+    } else {
+      const box = await finish.boundingBox();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await journey.probePage.mouse.click(x, y);
+      if (mode > 0) await journey.probePage.waitForTimeout(mode);
+      await journey.probePage.mouse.click(x, y);                                   // 실포인터 더블탭
+    }
+    await journey.probePage.waitForTimeout(520);
+    const after = await storedState(journey.probePage);
+    journeyMatrix.push({
+      mode: mode === "task" ? "동일 태스크" : `${mode}ms`,
+      doneDelta: after.journeysDone.length - before.journeysDone.length,
+      exitDialog: await journey.probePage.locator("#exit-dialog").isVisible(),
+      tab: await currentTab(journey.probePage),
+      startedOther: after.journey ? after.journey.id : null,
+    });
+    if (after.journey) {
+      // 오염된 진행 상태를 걷어내 남은 간격도 측정한다. 위반 사실은 matrix 에 남는다.
+      await journey.probePage.evaluate(() => {
+        const stored = JSON.parse(localStorage.getItem("cheonchaek.v1"));
+        stored.journey = null;
+        localStorage.setItem("cheonchaek.v1", JSON.stringify(stored));
+      });
+      await journey.probePage.reload({ waitUntil: "networkidle" });
+    }
+  }
+  assert.deepEqual(
+    journeyMatrix,
+    journeyModes.map((mode) => ({
+      mode: mode === "task" ? "동일 태스크" : `${mode}ms`,
+      doneDelta: 1,
+      exitDialog: false,
+      tab: "홈",
+      startedOther: null,
+    })),
+    "여정 완료 이중 실행에서 기록 1건·팝업 비표시·탭 유지·다른 여정 미시작이 깨졌습니다(N-7 · N-8)."
+  );
+  assert.deepEqual(journey.probeErrors, [], "여정 이중 실행 게이트에서 런타임 오류가 발생했습니다.");
+  await journey.probeContext.close();
+
   console.log(JSON.stringify({
     result: "pass",
     viewport: "390x844",
@@ -404,6 +725,11 @@ try {
     openingQuestionRotates: true,
     questionPool: catalog.questions,
     questionTwoLineGate: true,
+    heroFontBuckets: questionLineProbe.buckets,
+    imeCompositionGate: true,
+    journeyDoubleTapGate: journeyMatrix.map((row) => row.mode),
+    historyPayloadGate: { urlChanges, tabChanges },
+    serviceWorkerUpdateGate: true,
     responsive,
     themePersistence: true,
     homeRetapScrollTop: true,
