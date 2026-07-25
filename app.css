@@ -327,6 +327,8 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
   z-index: 20;
 }
+/* 오버레이 닫힘 직후 짧은 시간 배경 탭 관통 차단 (§6-4 N-7 · 키보드 포커스는 유지) */
+.tabbar.is-tap-locked { pointer-events: none; }
 .tab {
   flex: 1; min-height: 58px; border: none; background: none; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;

@@ -54,9 +54,13 @@ for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), 
 for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
-assert.match(sw, /ccb-v1\.8\.0/u, "서비스워커 캐시 버전이 v1.8.0이어야 합니다.");
+assert.match(sw, /ccb-v1\.9\.0/u, "서비스워커 캐시 버전이 v1.9.0이어야 합니다.");
 assert.match(app, /register\("sw\.js", \{ updateViaCache: "none" \}\)/u, "SW 갱신 확인은 HTTP 캐시를 우회해야 합니다.");
-assert.match(sw, /isUpdate[\s\S]*clients\.matchAll[\s\S]*client\.navigate/u, "기존 캐시 갱신 시 열린 앱을 최신 화면으로 다시 불러와야 합니다.");
+
+/* G-14 배포 갱신 통지 — 열린 탭의 히스토리를 건드리지 않고 통지만 한다 (§10-2 원장 12) */
+assert.doesNotMatch(sw, /\.navigate\s*\(/u, "서비스워커는 열린 탭을 강제 이동시켜서는 안 됩니다.");
+assert.match(sw, /isUpdate[\s\S]*clients\.matchAll[\s\S]*postMessage\(\{ type: "ccb-updated"/u,
+  "기존 캐시 갱신 시 postMessage 로 갱신 사실만 통지해야 합니다.");
 
 const uiSource = `${html}\n${app}\n${css}`;
 assert.doesNotMatch(uiSource, /천책방/u, "정식 명칭 오기");

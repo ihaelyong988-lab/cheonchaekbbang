@@ -166,17 +166,32 @@ const provenance = (bookId, canonicalTitle, canonicalAuthor) => ({
   recommendations: SOURCE_BY_BOOK_ID.get(bookId) || [],
 });
 
-function principleQuestion(principle) {
-  const suffix = "라는 관점은 언제 성립하는가?";
-  const clean = principle.replace(/[.!?]$/u, "").replace(/\s+/g, " ");
-  const clipped = clean.slice(0, Math.max(8, 44 - suffix.length - 2));
-  return `“${clipped}”${suffix}`;
+// 홈 히어로 2줄 상한. 게이트는 tests/data-integrity.mjs:29 이다.
+const QUESTION_MAX = 44;
+
+// 원문 접두를 인용하는 질문을 만든다. 절단은 마지막 어절 경계에서만 하고 말줄임표로 닫는다.
+// 같은 절단 규칙이 data/books.js 에 복제되어 어절 중간 비문을 두 곳에서 낳았으므로 정의는 이 파일 하나로 둔다.
+// 경계가 8자 미만이면 인용을 포기하고 제목 기반 문구를 쓴다 — 제목은 책마다 달라 문구 중복이 생기지 않는다.
+export function principleQuoteQuestion({ statement, title, quoteSuffix, titleSuffix }) {
+  const clean = String(statement).replace(/[.!?]$/u, "").replace(/\s+/g, " ");
+  const quoteRoom = QUESTION_MAX - quoteSuffix.length - 2;
+  if (clean.length <= quoteRoom) return `“${clean}”${quoteSuffix}`;
+  const boundary = clean.lastIndexOf(" ", quoteRoom - 1);
+  if (boundary >= 8) return `“${clean.slice(0, boundary)}…”${quoteSuffix}`;
+  const titleRoom = QUESTION_MAX - titleSuffix.length - 2;
+  const name = title.length <= titleRoom ? title : `${title.slice(0, titleRoom - 1)}…`;
+  return `『${name}』${titleSuffix}`;
 }
 
 function designedQuestions(title, principle, q1, q2, q3) {
   const source = `『${title}』의 핵심 주제와 원리 기반 자체 질문`;
-  return [q1, q2, q3, principleQuestion(principle)]
-    .map((text) => ({ text, source }));
+  const derived = principleQuoteQuestion({
+    statement: principle,
+    title,
+    quoteSuffix: "라는 관점은 언제 성립하는가?",
+    titleSuffix: "의 핵심 원리는 언제 성립하는가?",
+  });
+  return [q1, q2, q3, derived].map((text) => ({ text, source }));
 }
 
 export const CELEB_BOOKS = BOOK_ROWS.map((row) => {

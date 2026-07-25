@@ -3,7 +3,7 @@
 // 중복 작품은 기존 id에 근거와 질문을 결합해 로컬 기록을 보존한다.
 
 import { RESEARCH_BOOKS, RESEARCH_BY_BOOK_ID } from "./research-books.js";
-import { CELEB_BOOKS, CELEB_EXISTING_ENRICHMENTS } from "./celeb-books-2025.js";
+import { CELEB_BOOKS, CELEB_EXISTING_ENRICHMENTS, principleQuoteQuestion } from "./celeb-books-2025.js";
 
 export const DOMAINS = ["철학", "역사", "과학", "문학", "경제·사회", "예술"];
 
@@ -398,18 +398,23 @@ const COMBINED_BOOKS = [
   ...CELEB_BOOKS,
 ];
 
-function derivedQuestion(statement, suffix) {
-  const clean = String(statement).replace(/[.!?]$/u, "").replace(/\s+/g, " ");
-  const clipped = clean.slice(0, Math.max(8, 44 - suffix.length - 2));
-  return `“${clipped}”${suffix}`;
-}
-
+// 절단 규칙은 data/celeb-books-2025.js 의 principleQuoteQuestion 하나만 쓴다(원장 2).
 function ensureQuestionDepth(book) {
   const questions = [...book.questions];
   const source = `『${book.title}』 핵심 원리 기반 자체 질문`;
   const candidates = [
-    derivedQuestion(book.principle, "라는 관점은 언제 성립하는가?"),
-    derivedQuestion(book.root_reason || book.principle, "라는 관점이 놓치는 것은 무엇인가?"),
+    principleQuoteQuestion({
+      statement: book.principle,
+      title: book.title,
+      quoteSuffix: "라는 관점은 언제 성립하는가?",
+      titleSuffix: "의 핵심 원리는 언제 성립하는가?",
+    }),
+    principleQuoteQuestion({
+      statement: book.root_reason || book.principle,
+      title: book.title,
+      quoteSuffix: "라는 관점이 놓치는 것은 무엇인가?",
+      titleSuffix: "의 핵심 원리가 놓치는 것은 무엇인가?",
+    }),
   ];
   for (const text of candidates) {
     if (questions.length >= 3) break;

@@ -1,5 +1,5 @@
 // 천책빵 Service Worker — 전 자산 캐시, 완전 오프라인 동작 (PRD §6)
-const CACHE = "ccb-v1.8.0";
+const CACHE = "ccb-v1.9.0";
 const ASSETS = [
   "./",
   "./index.html",
@@ -27,8 +27,9 @@ self.addEventListener("activate", (e) => {
         await Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)));
         await self.clients.claim();
         if (!isUpdate) return;
+        // 갱신 사실만 통지한다. 열린 탭을 강제 이동시키면 history.state 가 소실된다.
         const clients = await self.clients.matchAll({ type: "window" });
-        await Promise.all(clients.map((client) => client.navigate(client.url)));
+        for (const client of clients) client.postMessage({ type: "ccb-updated", cache: CACHE });
       })
   );
 });

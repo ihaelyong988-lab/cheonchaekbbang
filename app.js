@@ -94,12 +94,14 @@ function sanitizeState(source = {}) {
       date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
       myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
     }));
+  // 진행 중 여정의 완료 답 초안. 저장 상한은 확정 답변과 같고, 여정이 없으면 남기지 않는다(§5-1).
+  const journeyDraft = journey && typeof source.journeyDraft === "string" ? source.journeyDraft.slice(0, 10000) : "";
   const profileName = typeof source.profile?.name === "string" ? source.profile.name.trim().slice(0, 20) : "";
   return {
     version: STORE_VERSION,
     read, reading, questions,
     rootArrivals: Number.isSafeInteger(source.rootArrivals) && source.rootArrivals >= 0 ? source.rootArrivals : 0,
-    journey, journeysDone,
+    journey, journeysDone, journeyDraft,
     profile: profileName ? { name: profileName } : null,
     theme: source.theme === "navy" ? "navy" : "silver",
     questionDeck: [...new Set(Array.isArray(source.questionDeck) ? source.questionDeck : [])]
@@ -247,8 +249,32 @@ function pushView(view) {
 }
 function top() { return stack[stack.length - 1]; }
 
+/* ── 오버레이 닫힘 단일 경로 (§6-4 N-5·N-6·N-7) ────── */
+let overlayDismissing = false;   // history.back() 비동기 구간 재진입 잠금
+let tabbarLockTimer = 0;
+const TABBAR_LOCK_MS = 150;
+
+// 오버레이가 사라진 직후 같은 좌표의 탭바가 눌리는 관통을 막는다. inert는 쓰지 않는다(N-7).
+function lockTabbar() {
+  const tabbar = document.querySelector(".tabbar");
+  tabbar.classList.add("is-tap-locked");
+  clearTimeout(tabbarLockTimer);
+  tabbarLockTimer = setTimeout(() => tabbar.classList.remove("is-tap-locked"), TABBAR_LOCK_MS);
+}
+
+// 배경 탭·닫기 버튼·ESC·저장 후 닫기가 모두 이 함수만 경유한다. history.back() 호출부는 여기 1곳이다.
+function dismissOverlay() {
+  if (appClosed) return;
+  if (overlayDismissing) return;
+  if (!top().overlay) return;
+  overlayDismissing = true;
+  lockTabbar();
+  history.back();
+}
+
 window.addEventListener("popstate", (e) => {
   if (appClosed) return;
+  overlayDismissing = false;                          // 도착 시 해제 — 조기 return 앞에 두어 고착을 막는다(N-6)
   const i = e.state && typeof e.state.i === "number" ? e.state.i : -1;
   if (i < 0) {
     clearHomeNav(); pendingHomeScroll = false;        // 센티널 진입 시 홈 복귀 잠금 해제
@@ -266,8 +292,9 @@ window.addEventListener("popstate", (e) => {
   stack = stack.slice(0, i + 1);
   if (stack.length === 0) stack = [{ tab: "question", overlay: null }];
   render();
-  if (hadOverlay && !top().overlay && overlayReturnFocus) {
-    requestAnimationFrame(restoreOverlayFocus);
+  if (hadOverlay && !top().overlay) {
+    lockTabbar();                                     // 해제 직후 배경 탭바 잠금(N-7)
+    if (overlayReturnFocus) requestAnimationFrame(restoreOverlayFocus);
   }
   clearHomeNav();                                     // 도착 시 잠금 해제
   if (pendingHomeScroll) {                            // render→포커스 복귀 뒤에 스크롤
@@ -352,7 +379,7 @@ document.addEventListener("keydown", (e) => {
     const sheet = overlayRoot.querySelector(".sheet");
     if (e.key === "Escape") {
       e.preventDefault();
-      history.back();
+      dismissOverlay();
       return;
     }
     if (e.key === "Tab" && sheet) {
@@ -411,6 +438,7 @@ function bookCard(b, opts = {}) {
 /* ── 탭: 질문 (홈 대시보드) ─────────────────────────── */
 let sessionDomain = DOMAINS[0];
 let libQuery = "", libDomain = "전체", libTier = "전체";
+let libComposing = false;   // 한글 IME 조합 중 재렌더 잠금
 const LIB_PAGE_SIZE = 80;
 let libVisibleCount = LIB_PAGE_SIZE;
 let questionQuery = "", questionResults = [];
@@ -566,15 +594,28 @@ function renderLibrary() {
       ? `<button class="btn btn-light load-more" data-load-more="1">더 보기 · ${visibleBooks.length}/${total}권</button>`
       : ""}`;
   const input = document.getElementById("lib-search");
-  input.addEventListener("input", () => {
-    libQuery = input.value;
-    libVisibleCount = LIB_PAGE_SIZE;
-    const pos = input.selectionStart;
-    renderLibrary();
-    const again = document.getElementById("lib-search");
-    again.focus();
-    again.setSelectionRange(pos, pos);
+  libComposing = false;                      // 새 입력 노드 — 조합 잠금 초기화
+  input.addEventListener("compositionstart", () => { libComposing = true; });
+  input.addEventListener("input", (e) => {
+    if (e.isComposing || libComposing) { libQuery = input.value; return; }  // 조합 중: 값만 갱신하고 렌더 보류
+    applyLibQuery(input);
   });
+  input.addEventListener("compositionend", () => {
+    libComposing = false;
+    applyLibQuery(input);                    // 조합 확정 시 1회만 렌더
+  });
+}
+
+// 서재 목록은 입력 노드를 포함한 화면 전체를 다시 그리므로 한글 조합 중에 렌더하면 조합이 파괴된다(원장 1).
+function applyLibQuery(input) {
+  if (!input.isConnected) return;            // 이미 렌더로 교체된 노드의 뒤늦은 이벤트
+  libQuery = input.value;
+  libVisibleCount = LIB_PAGE_SIZE;
+  const pos = input.selectionStart;
+  renderLibrary();
+  const again = document.getElementById("lib-search");
+  again.focus();
+  again.setSelectionRange(pos, pos);
 }
 
 /* ── 탭: 기록 ─────────────────────────────────────── */
@@ -744,33 +785,67 @@ function renderJourneyDetail() {
       </div>`;
   }).join("");
 
-  const next = JOURNEYS.find((x) => x.id !== j.id && !state.journeysDone.some((d) => d.id === x.id));
-  const doneCard = allDone ? `
-    <div class="journey-done">
-      <p class="q-kicker">여정 완료</p>
-      <p class="q">${esc(j.question.text)} — 이 질문에 대한 나의 답은 무엇인가.</p>
-      <textarea id="j-answer" placeholder="나의 답 (기기에만 보관)"></textarea>
-      <div class="sheet-actions">
-        <button class="btn btn-light" data-finish-journey="${j.id}">여정 완료로 저장</button>
-      </div>
-    </div>
-    ${next ? `<p class="next-suggest">다음 여정 — ${esc(next.domain)} · ${esc(next.question.text)}</p>` : ""}` : "";
-
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 진행" tabindex="-1">
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="여정 진행 닫기">닫기</button>
         <div class="q-card" style="margin-bottom:12px">
-          <p class="q-kicker">${esc(j.domain)} 여정 · ${doneIds.length}/${j.bookIds.length}권</p>
+          <p class="q-kicker">${esc(journeyProgressText(j, doneIds))}</p>
           <p class="q-text" style="font-size:19px">${esc(j.question.text)}</p>
           <p class="q-source">${esc(j.question.source)}</p>
         </div>
         ${books}
-        ${doneCard}
+        <div id="journey-done-wrap">${journeyDoneHtml(j, allDone)}</div>
+        <div class="sheet-actions">
+          <button class="btn btn-ghost" data-quit-journey="${j.id}">여정 그만두기</button>
+        </div>
       </div>
     </div>`;
   overlayRoot.querySelector(".sheet").focus();
+}
+
+function journeyProgressText(j, doneIds) {
+  return `${j.domain} 여정 · ${doneIds.length}/${j.bookIds.length}권`;
+}
+
+// 완료 답 초안은 state.journeyDraft 가 원천이므로 이 카드가 다시 그려져도 쓰던 답이 남는다.
+function journeyDoneHtml(j, allDone) {
+  if (!allDone) return "";
+  const next = JOURNEYS.find((x) => x.id !== j.id && !state.journeysDone.some((d) => d.id === x.id));
+  return `
+    <div class="journey-done">
+      <p class="q-kicker">여정 완료</p>
+      <p class="q">${esc(j.question.text)} — 이 질문에 대한 나의 답은 무엇인가.</p>
+      <label class="sr-only" for="j-answer">이 질문에 대한 나의 답</label>
+      <textarea id="j-answer" data-answer-draft="1" maxlength="10000"
+        placeholder="나의 답 (기기에만 보관)">${esc(state.journeyDraft)}</textarea>
+      <div class="sheet-actions">
+        <button class="btn btn-light" data-finish-journey="${j.id}">여정 완료로 저장</button>
+      </div>
+    </div>
+    ${next ? `<p class="next-suggest">다음 여정 — ${esc(next.domain)} · ${esc(next.question.text)}</p>` : ""}`;
+}
+
+/* 체크박스 조작은 전면 재렌더 대신 체크 상태·진행 문구·완료 카드 표시 여부만 갱신한다(원장 9). */
+function updateJourneyDetail() {
+  const j = state.journey ? JOURNEYS.find((x) => x.id === state.journey.id) : null;
+  if (!j) { render(); return; }
+  const doneIds = state.journey.doneBookIds;
+  j.bookIds.forEach((id, index) => {
+    const box = overlayRoot.querySelector(`[data-jcheck="${id}"]`);
+    if (!box) return;
+    const checked = doneIds.includes(id);
+    const locked = !checked && !j.bookIds.slice(0, index).every((previousId) => doneIds.includes(previousId));
+    box.checked = checked;
+    box.disabled = locked;
+    box.closest(".journey-check").classList.toggle("is-locked", locked);
+  });
+  const kicker = overlayRoot.querySelector(".q-card .q-kicker");
+  if (kicker) kicker.textContent = journeyProgressText(j, doneIds);
+  const wrap = overlayRoot.querySelector("#journey-done-wrap");
+  const allDone = j.bookIds.every((id) => doneIds.includes(id));
+  if (wrap && Boolean(wrap.firstElementChild) !== allDone) wrap.innerHTML = journeyDoneHtml(j, allDone);
 }
 
 /* ── 오버레이: 내 서재 (F9, 로컬 프로필) ───────────── */
@@ -830,7 +905,7 @@ function scrollPageTop() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
   if (!t) return;
 
   if (t.dataset.home) {
@@ -843,17 +918,19 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.openProfile) {
     pushView({ tab: top().tab, overlay: { type: "profile" } });
   } else if (t.dataset.saveProfile) {
+    t.disabled = true;                        // 진입 즉시 중복 탭 차단
     const input = document.getElementById("profile-name");
     const name = input.value.trim();
     const alertEl = document.getElementById("profile-alert");
-    if (!name) { alertEl.hidden = false; input.focus(); return; }
+    if (!name) { t.disabled = false; alertEl.hidden = false; input.focus(); return; }
     state.profile = { name };
     save();
-    history.back(); // 프로필 시트 닫기
+    dismissOverlay(); // 프로필 시트 닫기
   } else if (t.dataset.clearProfile) {
+    t.disabled = true;
     state.profile = null;
     save();
-    history.back();
+    dismissOverlay();
   } else if (t.dataset.tab) {
     if (t.dataset.tab === "question") { goHome(); return; }   // 홈 탭 = 첫 화면 복귀로 통일
     const cur = top();
@@ -870,14 +947,33 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.openJdetail) {
     pushView({ tab: top().tab, overlay: { type: "jdetail" } });
   } else if (t.dataset.startJourney) {
-    if (!state.journey) { state.journey = { id: t.dataset.startJourney, doneBookIds: [] }; save(); }
+    if (!state.journey) {
+      state.journey = { id: t.dataset.startJourney, doneBookIds: [] };
+      state.journeyDraft = "";
+      save();
+    }
     pushView({ tab: top().tab, overlay: { type: "jdetail" } });
   } else if (t.dataset.finishJourney) {
+    t.disabled = true;
+    const journeyId = t.dataset.finishJourney;
+    // 중복 기록 가드(N-8): 이미 완료했거나 진행 중 여정이 아니면 닫기만 한다.
+    if (state.journey?.id !== journeyId || state.journeysDone.some((x) => x.id === journeyId)) {
+      dismissOverlay();
+      return;
+    }
     const ans = document.getElementById("j-answer");
-    state.journeysDone.push({ id: t.dataset.finishJourney, date: today(), myAnswer: ans ? ans.value : "" });
+    state.journeysDone.push({ id: journeyId, date: today(), myAnswer: ans ? ans.value : state.journeyDraft });
     state.journey = null;
+    state.journeyDraft = "";
     save();
-    history.back(); // 여정 화면 닫기 → 이전 화면
+    dismissOverlay(); // 여정 화면 닫기 → 이전 화면
+  } else if (t.dataset.quitJourney) {
+    t.disabled = true;
+    state.journey = null;
+    state.journeyDraft = "";
+    save();
+    announce("진행 중이던 여정을 그만두었습니다.");
+    dismissOverlay();
   } else if (t.dataset.collect) {
     const [bookId] = t.dataset.collect.split("#");
     if (!state.questions.some((x) => x.id === t.dataset.collect)) {
@@ -916,7 +1012,7 @@ document.addEventListener("click", (e) => {
     sessionDomain = t.dataset.gotoLineage;
     pushView({ tab: "lineage", overlay: null });
   } else if (t.dataset.closeOverlay) {
-    if (e.target === t) history.back(); // 배경 탭 = 뒤로가기와 동일
+    if (e.target === t) dismissOverlay(); // 배경 탭·닫기 버튼 = 같은 단일 경로
   }
 });
 
@@ -950,7 +1046,7 @@ document.addEventListener("change", (e) => {
     state.journey.doneBookIds = state.journey.doneBookIds.filter((x) => !removeIds.has(x));
   }
   save();
-  render();
+  updateJourneyDetail();
 });
 
 document.addEventListener("input", (e) => {
@@ -964,6 +1060,12 @@ document.addEventListener("input", (e) => {
   if (ja) {
     const item = state.journeysDone.find((x) => x.id === ja.dataset.answerJ);
     if (item) { item.myAnswer = ja.value.slice(0, 10000); scheduleSave(); }
+    return;
+  }
+  const draft = e.target.closest("[data-answer-draft]");
+  if (draft && state.journey) {
+    state.journeyDraft = draft.value.slice(0, 10000);
+    scheduleSave();
   }
 });
 
