@@ -85,6 +85,28 @@ const questionTexts = BOOKS.flatMap((book) => book.questions.map((question) => q
 assert.equal(new Set(questionTexts.map((text) => text.replace(/\s+/gu, " ").trim())).size, questionTexts.length, "질문 문구가 중복됩니다.");
 assert.ok(questionTexts.every((text) => !/내 삶에서 바꿀 한 가지/u.test(text)), "일괄 생성형 질문 문구가 남아 있습니다.");
 
+/* G-10 인용 질문 종결 (§11-2, §10-2 원장 2) — 전수 판정.
+   원문보다 짧은 접두를 인용하면 반드시 말줄임표로 닫고, 절단 지점은 어절 경계여야 한다.
+   원문 전문 인용은 절단이 아니므로 대상에서 제외한다. 정규화는 생성부와 같은 규칙을 여기서 다시 쓴다. */
+const statementText = (value) => String(value).replace(/[.!?]$/u, "").replace(/\s+/gu, " ");
+let quotedPrefixCount = 0;
+for (const book of BOOKS) {
+  const statements = [book.principle, book.root_reason].filter(Boolean).map(statementText);
+  for (const question of book.questions) {
+    const quoted = /^“([^”]*)”/u.exec(question.text);
+    if (!quoted) continue;
+    const body = quoted[1];
+    const core = body.endsWith("…") ? body.slice(0, -1) : body;
+    const statement = statements.find((text) => text.startsWith(core) && core.length < text.length);
+    if (!statement) continue;
+    quotedPrefixCount += 1;
+    assert.ok(body.endsWith("…"), `${book.id}: 원문 접두 인용이 말줄임표로 끝나지 않습니다 — ${question.text}`);
+    assert.ok(!core.endsWith(" "), `${book.id}: 인용부가 공백으로 끝납니다 — ${question.text}`);
+    assert.equal(statement.charAt(core.length), " ", `${book.id}: 인용부가 어절 중간에서 잘렸습니다 — ${question.text}`);
+  }
+}
+assert.ok(quotedPrefixCount > 0, "원문 접두 인용 질문이 사라졌습니다 — G-10 판정 대상이 0건입니다.");
+
 console.log(JSON.stringify({
   result: "pass",
   sourceSheet: "인생책",

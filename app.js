@@ -50,93 +50,276 @@ function stepsToRoot(book) {
   return steps;                                          // 50홉 상한 방어
 }
 
+/* ── 질문 id (DI-2 안정 id) ─────────────────────────── */
+// 저장 키는 데이터가 준 고정 qid 를 먼저 쓰고, 없을 때만 배열 순번으로 만든다.
+// 소비 코드는 배열 인덱스를 되짚지 않고 Q_BY_ID 로만 질문을 찾는다 — 문구 순서가 바뀌어도 답이 옮겨 붙지 않는다.
+function questionId(book, index) {
+  const fixed = book.questions[index]?.qid;
+  return typeof fixed === "string" && fixed ? fixed : `${book.id}#${index}`;
+}
+const Q_POOL = ALL.flatMap((book) => book.questions.map((q, index) => ({
+  id: questionId(book, index), bookId: book.id, q,
+})));
+const Q_BY_ID = new Map(Q_POOL.map((item) => [item.id, item]));
+const VALID_QUESTION_IDS = new Set(Q_BY_ID.keys());
+
 /* ── 사용자 상태 (localStorage) ─────────────────────── */
 const STORE_KEY = "cheonchaek.v1";
 const STORE_VERSION = 2;
-const VALID_QUESTION_IDS = new Set(ALL.flatMap((book) =>
-  book.questions.map((question, index) => `${book.id}#${index}`)
-));
+const LIB_TIERS = ["전체", "뿌리", "줄기", "가지"];
+const ORPHAN_KINDS = new Set(["read", "reading", "question", "journey"]);
+const ORPHAN_MAX = 300;
+
+function asArray(value) { return Array.isArray(value) ? value : []; }
+function cloneState(value) { return JSON.parse(JSON.stringify(value)); }
 
 function uniqueValidIds(value) {
-  return [...new Set(Array.isArray(value) ? value : [])].filter((id) => BY_ID.has(id));
+  return [...new Set(asArray(value))].filter((id) => BY_ID.has(id));
+}
+
+// 영속 설정은 화이트리스트로만 통과시킨다. 검색어는 세션 한정이므로 여기에 넣지 않는다(C5-2).
+function sanitizePrefs(source) {
+  const prefs = source && typeof source === "object" ? source : {};
+  return {
+    lineageDomain: DOMAINS.includes(prefs.lineageDomain) ? prefs.lineageDomain : "",
+    libDomain: prefs.libDomain === "전체" || DOMAINS.includes(prefs.libDomain) ? prefs.libDomain : "전체",
+    libTier: LIB_TIERS.includes(prefs.libTier) ? prefs.libTier : "전체",
+  };
 }
 
 function sanitizeState(source = {}) {
-  const read = uniqueValidIds(source.read);
-  const readSet = new Set(read);
-  const reading = uniqueValidIds(source.reading).filter((id) => !readSet.has(id));
-  const questionSeen = new Set();
-  const questions = (Array.isArray(source.questions) ? source.questions : [])
-    .filter((item) => item && VALID_QUESTION_IDS.has(item.id) && !questionSeen.has(item.id) && questionSeen.add(item.id))
-    .map((item) => ({
-      id: item.id,
-      bookId: item.id.split("#")[0],
+  // 카탈로그에서 참조를 잃은 기록은 지우지 않고 격리 보존한다(DI-1). 같은 항목이 재로드마다 늘어나지 않게 kind+id 로 접는다.
+  const orphans = [];
+  const orphanKeys = new Set();
+  const quarantine = (kind, id, item = {}) => {
+    if (typeof id !== "string" || !id) return;
+    const key = `${kind}:${id}`;
+    if (orphanKeys.has(key) || orphans.length >= ORPHAN_MAX) return;
+    orphanKeys.add(key);
+    orphans.push({
+      kind, id,
       date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
       myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
-    }));
+    });
+  };
+  for (const item of asArray(source.orphans)) {
+    if (item && ORPHAN_KINDS.has(item.kind)) quarantine(item.kind, item.id, item);
+  }
+
+  const storedRead = [...new Set(asArray(source.read))];
+  const storedReading = [...new Set(asArray(source.reading))];
+  for (const id of storedRead) if (!BY_ID.has(id)) quarantine("read", id);
+  for (const id of storedReading) if (!BY_ID.has(id)) quarantine("reading", id);
+  const read = storedRead.filter((id) => BY_ID.has(id));
+  const readSet = new Set(read);
+  const reading = storedReading.filter((id) => BY_ID.has(id) && !readSet.has(id));
+
+  const questionSeen = new Set();
+  const questions = [];
+  for (const item of asArray(source.questions)) {
+    if (!item || typeof item.id !== "string" || questionSeen.has(item.id)) continue;
+    questionSeen.add(item.id);
+    if (!VALID_QUESTION_IDS.has(item.id)) { quarantine("question", item.id, item); continue; }
+    questions.push({
+      id: item.id,
+      bookId: Q_BY_ID.get(item.id).bookId,
+      date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
+      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
+    });
+  }
+
   const journeyDef = JOURNEYS.find((journey) => journey.id === source.journey?.id);
   let journey = null;
   if (journeyDef) {
     const storedDone = new Set(uniqueValidIds(source.journey.doneBookIds));
-    const doneBookIds = [];
-    for (const id of journeyDef.bookIds) {
-      if (!storedDone.has(id)) break;
-      doneBookIds.push(id);
-    }
-    journey = { id: journeyDef.id, doneBookIds };
+    // 결번은 건너뛰고 남은 진행은 보존한다 — 중간 한 권이 카탈로그에서 빠져도 진척을 잘라내지 않는다(원장 11).
+    journey = { id: journeyDef.id, doneBookIds: journeyDef.bookIds.filter((id) => storedDone.has(id)) };
   }
+
   const doneSeen = new Set();
-  const journeysDone = (Array.isArray(source.journeysDone) ? source.journeysDone : [])
-    .filter((item) => JOURNEYS.some((journeyItem) => journeyItem.id === item?.id)
-      && !doneSeen.has(item.id) && doneSeen.add(item.id))
-    .map((item) => ({
+  const journeysDone = [];
+  for (const item of asArray(source.journeysDone)) {
+    if (!item || typeof item.id !== "string" || doneSeen.has(item.id)) continue;
+    doneSeen.add(item.id);
+    if (!JOURNEYS.some((journeyItem) => journeyItem.id === item.id)) { quarantine("journey", item.id, item); continue; }
+    journeysDone.push({
       id: item.id,
       date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
       myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
-    }));
+    });
+  }
+
+  // 진행 중 여정의 완료 답 초안. 저장 상한은 확정 답변과 같고, 여정이 없으면 남기지 않는다(§5-1).
+  const journeyDraft = journey && typeof source.journeyDraft === "string" ? source.journeyDraft.slice(0, 10000) : "";
   const profileName = typeof source.profile?.name === "string" ? source.profile.name.trim().slice(0, 20) : "";
   return {
     version: STORE_VERSION,
     read, reading, questions,
     rootArrivals: Number.isSafeInteger(source.rootArrivals) && source.rootArrivals >= 0 ? source.rootArrivals : 0,
-    journey, journeysDone,
+    journey, journeysDone, journeyDraft,
     profile: profileName ? { name: profileName } : null,
     theme: source.theme === "navy" ? "navy" : "silver",
-    questionDeck: [...new Set(Array.isArray(source.questionDeck) ? source.questionDeck : [])]
-      .filter((id) => VALID_QUESTION_IDS.has(id)),
+    prefs: sanitizePrefs(source.prefs),
+    onboardingDismissed: source.onboardingDismissed === true,
+    orphans,
+    questionDeck: [...new Set(asArray(source.questionDeck))].filter((id) => VALID_QUESTION_IDS.has(id)),
     lastHeroQuestionId: VALID_QUESTION_IDS.has(source.lastHeroQuestionId) ? source.lastHeroQuestionId : null,
   };
 }
 
-function loadState() {
+function readStored() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return sanitizeState(JSON.parse(raw));
-  } catch { /* 손상 시 초기화 */ }
-  return sanitizeState();
+    return raw === null ? null : JSON.parse(raw);
+  } catch { return null; }
 }
-const state = loadState();
+
+// 저장 키가 없던 첫 방문과 읽기 실패를 구분한다. 실패는 배너로 알린다(원장 10).
+let storageBroken = false;
+function loadState() {
+  let raw = null;
+  try { raw = localStorage.getItem(STORE_KEY); } catch { storageBroken = true; }
+  if (typeof raw === "string") {
+    try { return { raw, state: sanitizeState(JSON.parse(raw)) }; }
+    catch { storageBroken = true; }
+  }
+  return { raw: typeof raw === "string" ? raw : null, state: sanitizeState() };
+}
+const boot = loadState();
+const state = boot.state;
+let syncedSnapshot = cloneState(state);   // 병합 기준선 = 내가 마지막으로 읽거나 쓴 저장값
 const appStatus = document.getElementById("app-status");
 let answerSaveTimer = 0;
+const SAVE_FAIL_NOTICE = "기기 저장 공간이 부족해 변경 내용을 저장하지 못했습니다.";
+const SAVE_FAIL_BANNER = "이 기기가 기록 저장을 거부했습니다. 저장 공간을 비우거나 비공개 모드를 해제한 뒤 다시 시도하세요.";
+const LOAD_FAIL_BANNER = "이 기기에 저장된 기록을 읽지 못했습니다. 이번 방문의 기록은 새로 시작합니다.";
+
 function announce(message) {
   appStatus.textContent = "";
   requestAnimationFrame(() => { appStatus.textContent = message; });
 }
+
+// 보이는 통보 1건. #app-alert 자리에 담아 탭 렌더에 지워지지 않게 하고, 기존 라이브 리전 통보는 그대로 유지한다(원장 10).
+function saveAlertEl() {
+  let el = document.getElementById("save-alert");
+  if (!el) {
+    el = document.createElement("p");
+    el.id = "save-alert";
+    el.className = "notice save-alert";
+    el.setAttribute("role", "alert");
+    el.hidden = true;
+    const host = document.getElementById("app-alert");
+    if (host) host.append(el);
+    else document.getElementById("view").before(el);
+  }
+  return el;
+}
+function setAlertHost(el, visible) {
+  const host = el.parentElement;
+  if (host && host.id === "app-alert") host.hidden = !visible;
+}
+function showSaveAlert(message) {
+  const el = saveAlertEl();
+  el.textContent = message;
+  el.hidden = false;
+  setAlertHost(el, true);
+}
+function hideSaveAlert() {
+  const el = document.getElementById("save-alert");
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  el.textContent = "";
+  setAlertHost(el, false);
+}
+
+/* ── 병합 저장 (DI-5) ──────────────────────────────────
+   타 탭이 새로 남긴 항목만 받아들이고, 내가 지운 항목(기준선에 있던 것)은 되살리지 않는다. */
+// 유효성 판정은 sanitizeState 한 곳에 둔다. 병합 단계에서 걸러 버리면 격리 대상이 소리 없이 사라진다(DI-1).
+function mergeIds(mine, theirs, base) {
+  const known = new Set([...mine, ...base]);
+  return [...mine, ...theirs.filter((id) => typeof id === "string" && !known.has(id))];
+}
+function mergeItems(mine, theirs, base, keyOf) {
+  const known = new Set([...mine, ...base].map(keyOf));
+  return [...mine, ...theirs.filter((item) => item && typeof item.id === "string" && !known.has(keyOf(item)))];
+}
+// 홑값·객체 필드는 3방향 비교로 정한다. 내가 손대지 않은 필드는 타 탭 변경을 받아들인다.
+function mergeField(mine, theirs, base) {
+  const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return same(mine, base) && !same(theirs, base) ? theirs : mine;
+}
+function mergedForSave() {
+  const stored = readStored();
+  if (!stored) return state;
+  const base = syncedSnapshot;
+  const byId = (item) => item.id;
+  return {
+    ...state,
+    read: mergeIds(state.read, asArray(stored.read), base.read),
+    reading: mergeIds(state.reading, asArray(stored.reading), base.reading),
+    questions: mergeItems(state.questions, asArray(stored.questions), base.questions, byId),
+    journeysDone: mergeItems(state.journeysDone, asArray(stored.journeysDone), base.journeysDone, byId),
+    orphans: mergeItems(state.orphans, asArray(stored.orphans), base.orphans, (item) => `${item.kind}:${item.id}`),
+    journey: mergeField(state.journey, stored.journey, base.journey),
+    journeyDraft: mergeField(state.journeyDraft, stored.journeyDraft, base.journeyDraft),
+    profile: mergeField(state.profile, stored.profile, base.profile),
+    theme: mergeField(state.theme, stored.theme, base.theme),
+    prefs: mergeField(state.prefs, stored.prefs, base.prefs),
+    onboardingDismissed: mergeField(state.onboardingDismissed, stored.onboardingDismissed, base.onboardingDismissed),
+    rootArrivals: mergeField(state.rootArrivals, stored.rootArrivals, base.rootArrivals),
+  };
+}
+
 function save() {
+  const payload = sanitizeState(mergedForSave());   // 병합 후에도 version 은 현행 값이다
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    return true;
+    localStorage.setItem(STORE_KEY, JSON.stringify(payload));
   } catch {
-    announce("기기 저장 공간이 부족해 변경 내용을 저장하지 못했습니다.");
+    announce(SAVE_FAIL_NOTICE);
+    showSaveAlert(SAVE_FAIL_BANNER);
     return false;
   }
+  Object.assign(state, payload);      // 병합으로 들어온 타 탭 항목을 메모리에도 싣는다
+  syncedSnapshot = cloneState(payload);
+  hideSaveAlert();
+  return true;
 }
+
+// 상태를 바꾼 뒤 저장이 거부되면 직전 상태로 되돌린다. 호출부는 false 에서 성공 UI 로 넘어가지 않는다(DI-4).
+function commit(change) {
+  const backup = cloneState(state);
+  change();
+  if (save()) return true;
+  Object.assign(state, backup);
+  return false;
+}
+
 function scheduleSave() {
   clearTimeout(answerSaveTimer);
-  answerSaveTimer = setTimeout(save, 250);
+  answerSaveTimer = setTimeout(() => { answerSaveTimer = 0; save(); }, 250);
 }
+// 히어로 추첨과 대기 중인 입력을 재방문 전에 1회 확정한다(원장 3).
 window.addEventListener("pagehide", () => {
-  if (answerSaveTimer) { clearTimeout(answerSaveTimer); save(); }
+  clearTimeout(answerSaveTimer);
+  answerSaveTimer = 0;
+  save();
+});
+// 타 탭 변경을 상태에 반영한 뒤 렌더한다. 보고 있는 질문과 쓰던 초안은 타 탭 값으로 바꾸지 않는다.
+window.addEventListener("storage", (event) => {
+  if (event.key !== null && event.key !== STORE_KEY) return;
+  const stored = readStored();
+  if (!stored) return;
+  const next = sanitizeState({
+    ...stored,
+    journeyDraft: state.journeyDraft || stored.journeyDraft,
+    questionDeck: state.questionDeck,
+    lastHeroQuestionId: state.lastHeroQuestionId,
+  });
+  Object.assign(state, next);
+  syncedSnapshot = cloneState(next);
+  const focused = document.activeElement;
+  if (focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement) return;
+  render();
 });
 function applyTheme() {
   document.documentElement.dataset.theme = state.theme;
@@ -155,24 +338,21 @@ function readStatus(id) {
   if (state.reading.includes(id)) return "reading";
   return "none";
 }
-function setReadStatus(id, st) {
+function applyReadStatus(id, st) {
   state.read = state.read.filter((x) => x !== id);
   state.reading = state.reading.filter((x) => x !== id);
   if (st === "read") state.read.push(id);
   if (st === "reading") state.reading.push(id);
-  save();
+}
+function setReadStatus(id, st) {
+  return commit(() => applyReadStatus(id, st));
 }
 function cycleRead(id) {
   const next = { none: "reading", reading: "read", read: "none" };
-  setReadStatus(id, next[readStatus(id)]);
+  return setReadStatus(id, next[readStatus(id)]);
 }
 
 /* ── 홈 질문: 앱을 열 때마다 한 번씩 순환 ───────────── */
-const Q_POOL = ALL.flatMap((b) =>
-  b.questions.map((q, i) => ({ id: `${b.id}#${i}`, bookId: b.id, q }))
-);
-const Q_BY_ID = new Map(Q_POOL.map((item) => [item.id, item]));
-
 function shuffledQuestionIds() {
   const ids = Q_POOL.map((item) => item.id);
   for (let i = ids.length - 1; i > 0; i -= 1) {
@@ -182,6 +362,7 @@ function shuffledQuestionIds() {
   return ids;
 }
 
+// 추첨은 메모리에만 남긴다. 저장은 [다른 질문]·pagehide·정화 확정 시점에만 일어난다(원장 3).
 function drawQuestion() {
   let deck = state.questionDeck.filter((id) => Q_BY_ID.has(id));
   if (deck.length === 0) deck = shuffledQuestionIds();
@@ -192,18 +373,33 @@ function drawQuestion() {
   }
   state.questionDeck = deck;
   state.lastHeroQuestionId = id;
-  save();
   return Q_BY_ID.get(id) || Q_POOL[0];
 }
 
 let heroQuestion = drawQuestion();
+// 저장 키가 이미 있던 재방문에서만 정화·격리 결과와 이번 회차 추첨을 확정한다.
+// 입력 0회 첫 방문은 기기에 아무것도 쓰지 않는다(원장 3). 격리 보존은 이 저장으로 영속화된다(원장 11).
+if (boot.raw !== null) save();
+if (storageBroken) showSaveAlert(LOAD_FAIL_BANNER);
 let lastStripKey = null;   // 홈 스트립 2·3번 칸 문맥 전환 감지 (책·수집수 변화 시에만 애니메이션)
 
-/* ── 내비게이션: 히스토리 스택 + 종료 트랩 (PRD F8, §6) ── */
-let stack = [{ tab: "question", overlay: null }];
+/* ── 내비게이션: 히스토리 포인터 + 종료 트랩 (PRD F8, §6) ── */
 const HASH = { question: "#question", lineage: "#lineage", library: "#library", record: "#record" };
-history.replaceState({ i: -1 }, "");                 // 종료 트랩(센티널)
-history.pushState({ i: 0 }, "", HASH.question);      // 기본 화면
+const TAB_BY_HASH = new Map(Object.entries(HASH).map(([tab, hash]) => [hash, tab]));
+const OVERLAY_TYPES = new Set(["sheet", "trail", "jlist", "jdetail", "profile", "settings"]);
+// 진입 해시가 탭을 지정하면 그 탭으로 부팅한다. 미지 해시는 홈으로 폴백하되 요청 주소는 그대로 둔다(§6-5).
+const bootTab = TAB_BY_HASH.get(location.hash) || "question";
+const bootHomeUrl = bootTab === "question" ? location.hash || HASH.question : HASH.question;
+let currentView = { tab: "question", overlay: null };
+let pointer = 0;                                  // 히스토리 위치 = state.i. 항목을 잘라내지 않는다(N-2)
+history.replaceState({ sentinel: true }, "");     // 종료 트랩(센티널) — 고유 값으로만 식별한다(N-1)
+history.pushState({ i: 0, view: currentView }, "", bootHomeUrl);   // 기본 화면
+if (bootTab !== "question") {
+  // 딥링크 탭은 홈 항목 위에 올린다 — 진입 직후 뒤로가기가 종료가 아니라 홈으로 가야 한다(§6-3).
+  currentView = { tab: bootTab, overlay: null };
+  pointer = 1;
+  history.pushState({ i: 1, view: currentView }, "", HASH[bootTab]);
+}
 const exitEl = document.getElementById("exit-dialog");
 const exitBackground = [".topbar", "#view", ".tabbar", "#overlay-root"]
   .map((selector) => document.querySelector(selector));
@@ -239,34 +435,149 @@ function setOverlayBackgroundInert(inert) {
   document.body.classList.toggle("has-overlay", inert);
 }
 
+// 히스토리 페이로드의 뷰를 렌더 가능한 값으로 좁힌다. 되살릴 수 없는 오버레이는 버려 배경만 잠긴 화면을 막는다.
+function normalizeView(view) {
+  const tab = view && HASH[view.tab] ? view.tab : "question";
+  const overlay = view?.overlay;
+  if (!overlay || !OVERLAY_TYPES.has(overlay.type)) return { tab, overlay: null };
+  if (overlay.type === "sheet" || overlay.type === "trail") {
+    return BY_ID.has(overlay.bookId)
+      ? { tab, overlay: { type: overlay.type, bookId: overlay.bookId } }
+      : { tab, overlay: null };
+  }
+  if (overlay.type === "jdetail" && !state.journey) return { tab, overlay: null };
+  return { tab, overlay: { type: overlay.type } };
+}
+
+// 계약 형식이면 그대로 읽고, 미지 항목은 센티널로 접지 않고 현재 주소 기준으로 재구성한다(N-1·N-3).
+function readEntry(raw) {
+  if (raw && typeof raw.i === "number" && raw.i >= 0 && raw.view) {
+    return { i: raw.i, view: normalizeView(raw.view), known: true };
+  }
+  return {
+    i: pointer + 1,
+    view: { tab: TAB_BY_HASH.get(location.hash) || currentView.tab, overlay: null },
+    known: false,
+  };
+}
+
 function pushView(view) {
   if (view.overlay && !top().overlay) overlayReturnFocus = rememberFocus(document.activeElement);
-  stack.push(view);
-  history.pushState({ i: stack.length - 1 }, "", HASH[view.tab]);
+  currentView = view;
+  pointer += 1;
+  history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
   render();
 }
-function top() { return stack[stack.length - 1]; }
+function top() { return currentView; }
+
+/* ── 오버레이 닫힘 단일 경로 (§6-4 N-5·N-6·N-7) ────── */
+let overlayDismissing = false;   // history.back() 비동기 구간 재진입 잠금
+let tabbarLockTimer = 0;
+const TABBAR_LOCK_MS = 150;
+const TAP_THROUGH_SLOP = 16;          // 같은 자리 판정 허용치(px) — 손가락 흔들림
+const TAP_THROUGH_SETTLE_MS = 320;    // 복원 화면이 상호작용 가능해진 다음 프레임부터 세는 여유
+const TAP_THROUGH_FALLBACK_MS = 700;  // popstate 미도달 대비 안전 해제
+let tapGesture = null;                // 지금 처리 중인 클릭 제스처의 좌표
+let tapThrough = null;                // 닫힘을 일으킨 탭의 좌표
+let tapThroughTimer = 0;
+
+// 오버레이가 사라진 직후 같은 좌표의 탭바가 눌리는 관통을 막는다. inert는 쓰지 않는다(N-7).
+function lockTabbar() {
+  const tabbar = document.querySelector(".tabbar");
+  tabbar.classList.add("is-tap-locked");
+  clearTimeout(tabbarLockTimer);
+  tabbarLockTimer = setTimeout(() => tabbar.classList.remove("is-tap-locked"), TABBAR_LOCK_MS);
+}
+
+/* 오버레이가 닫히면 아래 화면이 즉시 그 자리로 올라온다. 되살아나는 시트는 배경이 아니어서
+   탭바 잠금이 닿지 않고, 시트 전체를 시간 창으로 잠그면 창이 끝난 뒤의 정상 조작까지 죽는다.
+   그래서 닫힘을 일으킨 탭의 좌표만 무효로 한다 — 다른 자리 탭은 잠기지 않고 즉시 가드를 걷는다.
+   해제 기준은 상수 하나가 아니라 복원 렌더가 화면에 오른 다음 프레임이다(N-7). */
+function armTapThrough() {
+  if (!tapGesture) return;              // 키보드·프로그램 호출은 관통할 좌표가 없다
+  tapThrough = tapGesture;
+  clearTimeout(tapThroughTimer);
+  tapThroughTimer = setTimeout(releaseTapThrough, TAP_THROUGH_FALLBACK_MS);
+}
+
+function releaseTapThrough() {
+  tapThrough = null;
+  if (tapThroughTimer) { clearTimeout(tapThroughTimer); tapThroughTimer = 0; }
+}
+
+function scheduleTapThroughRelease() {
+  if (!tapThrough) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!tapThrough) return;
+    clearTimeout(tapThroughTimer);
+    tapThroughTimer = setTimeout(releaseTapThrough, TAP_THROUGH_SETTLE_MS);
+  }));
+}
+
+// 같은 자리 = 관통으로 보고 포인터 이벤트를 무효화한다. 다른 자리 = 새 제스처이므로 가드를 걷는다.
+function swallowTapThrough(e) {
+  if (!tapThrough) return false;
+  if (e.type === "click" && e.detail === 0) return false;   // 키보드 활성화는 좌표를 남기지 않는다
+  if (Math.abs(e.clientX - tapThrough.x) > TAP_THROUGH_SLOP
+    || Math.abs(e.clientY - tapThrough.y) > TAP_THROUGH_SLOP) {
+    releaseTapThrough();
+    return false;
+  }
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.type === "click") releaseTapThrough();              // 한 번 무효화하면 다음 탭은 정상 조작이다
+  return true;
+}
+
+document.addEventListener("pointerdown", swallowTapThrough, true);
+document.addEventListener("pointerup", swallowTapThrough, true);
+// 닫힘을 일으킨 제스처의 좌표는 이 제스처가 처리되는 동안에만 유효하다 — 뒤늦은 ESC 닫힘은 무장하지 않는다.
+document.addEventListener("click", (e) => {
+  if (swallowTapThrough(e)) return;
+  tapGesture = e.detail > 0 ? { x: e.clientX, y: e.clientY } : null;
+}, true);
+window.addEventListener("click", () => { tapGesture = null; });
+
+// 배경 탭·닫기 버튼·ESC·저장 후 닫기가 모두 이 함수만 경유한다. history.back() 호출부는 여기 1곳이다.
+function dismissOverlay() {
+  if (appClosed) return;
+  if (overlayDismissing) return;
+  if (!top().overlay) return;
+  overlayDismissing = true;
+  lockTabbar();
+  armTapThrough();
+  history.back();
+}
 
 window.addEventListener("popstate", (e) => {
   if (appClosed) return;
-  const i = e.state && typeof e.state.i === "number" ? e.state.i : -1;
-  if (i < 0) {
+  overlayDismissing = false;                          // 도착 시 해제 — 조기 return 앞에 두어 고착을 막는다(N-6)
+  if (e.state?.closed) return;                        // 닫힘 표식 항목은 뷰 재구성 대상이 아니다
+  if (e.state?.sentinel === true) {
     clearHomeNav(); pendingHomeScroll = false;        // 센티널 진입 시 홈 복귀 잠금 해제
     exitReturnInProgress = true;
     showExit();
     history.forward();                                // 팝업 중 반복 뒤로가기로 앱을 벗어나지 않게 복귀
     return;
   }
-  if (exitReturnInProgress && i === 0) {
+  const entry = readEntry(e.state);
+  if (exitReturnInProgress && entry.i === 0) {
     exitReturnInProgress = false;
     if (!exitEl.hidden) { clearHomeNav(); pendingHomeScroll = false; return; }
   }
   hideExit();
   const hadOverlay = Boolean(top().overlay);
-  stack = stack.slice(0, i + 1);
-  if (stack.length === 0) stack = [{ tab: "question", overlay: null }];
+  // 앞으로가기로 오버레이가 되살아나는 경로에도 복귀 지점을 남긴다(원장 14 정합).
+  if (entry.view.overlay && !hadOverlay && !overlayReturnFocus) {
+    overlayReturnFocus = rememberFocus(document.activeElement);
+  }
+  pointer = entry.i;
+  currentView = entry.view;
+  if (!entry.known) history.replaceState({ i: pointer, view: currentView }, "");   // 미지 항목 인덱스 재기입(N-3)
   render();
-  if (hadOverlay && !top().overlay && overlayReturnFocus) {
+  scheduleTapThroughRelease();                        // 복원 렌더 다음 프레임부터 관통 가드 해제를 센다(N-7)
+  if (hadOverlay && !top().overlay) {
+    lockTabbar();                                     // 해제 직후 배경 탭바 잠금(N-7)
     requestAnimationFrame(restoreOverlayFocus);
   }
   clearHomeNav();                                     // 도착 시 잠금 해제
@@ -318,7 +629,7 @@ function goHome() {
   if (!exitEl.hidden) return;               // 종료 팝업 표시 중
   if (exitReturnInProgress) return;         // 센티널 복귀(forward) 대기 중
   if (homeNavInProgress) return;            // 연속 탭
-  const d = stack.length - 1;
+  const d = pointer;                        // 인덱스 0까지의 거리
   if (d <= 0) { scrollPageTop(); return; }  // 이미 첫 화면(=인덱스 0, 오버레이 없음)
   homeNavInProgress = true;
   pendingHomeScroll = true;
@@ -352,7 +663,7 @@ document.addEventListener("keydown", (e) => {
     const sheet = overlayRoot.querySelector(".sheet");
     if (e.key === "Escape") {
       e.preventDefault();
-      history.back();
+      dismissOverlay();
       return;
     }
     if (e.key === "Tab" && sheet) {
@@ -409,8 +720,24 @@ function bookCard(b, opts = {}) {
 }
 
 /* ── 탭: 질문 (홈 대시보드) ─────────────────────────── */
-let sessionDomain = DOMAINS[0];
-let libQuery = "", libDomain = "전체", libTier = "전체";
+// 읽음이 가장 많은 분야. 동수는 DOMAINS 순서로 가른다.
+function mostReadDomain() {
+  const counts = new Map();
+  for (const id of state.read) {
+    const book = BY_ID.get(id);
+    if (book) counts.set(book.domain, (counts.get(book.domain) || 0) + 1);
+  }
+  let best = "", bestCount = 0;
+  for (const domain of DOMAINS) {
+    const count = counts.get(domain) || 0;
+    if (count > bestCount) { best = domain; bestCount = count; }
+  }
+  return best;
+}
+// 기본값 우선순위: 저장된 prefs → 읽음 최다 분야 추론 → 첫 분야(원장 5).
+let sessionDomain = state.prefs.lineageDomain || mostReadDomain() || DOMAINS[0];
+let libQuery = "", libDomain = state.prefs.libDomain, libTier = state.prefs.libTier;
+let libComposing = false;   // 한글 IME 조합 중 재렌더 잠금
 const LIB_PAGE_SIZE = 80;
 let libVisibleCount = LIB_PAGE_SIZE;
 let questionQuery = "", questionResults = [];
@@ -445,6 +772,24 @@ function questionSearchHtml() {
     ${results}`;
 }
 
+/* 기록 0건 첫 방문자에게만 1회 노출한다. 삽입 위치는 히어로 직후로 고정한다(INV-1 · 원장 7). */
+function hasAnyRecord() {
+  return state.read.length > 0 || state.reading.length > 0 || state.questions.length > 0
+    || state.journeysDone.length > 0 || Boolean(state.journey) || Boolean(state.profile);
+}
+function onboardingHtml() {
+  if (state.onboardingDismissed || hasAnyRecord()) return "";
+  return `
+    <div class="card onboard">
+      <div class="card-title">이름을 저장하면 이 기기가 읽은 자리를 기억합니다</div>
+      <div class="card-meta">읽음 표시와 수집한 질문, 직접 쓴 답은 이 기기에만 남고 밖으로 나가지 않습니다.</div>
+      <div class="onboard-actions">
+        <button class="btn btn-primary" data-open-profile="1">내 서재 열기</button>
+        <button class="btn btn-ghost" data-dismiss-onboard="1">다음에</button>
+      </div>
+    </div>`;
+}
+
 function renderQuestion() {
   const item = heroQuestion;
   const b = BY_ID.get(item.bookId);
@@ -452,8 +797,7 @@ function renderQuestion() {
   const j = state.journey ? JOURNEYS.find((x) => x.id === state.journey.id) : null;
   const readingNow = state.reading.map((id) => BY_ID.get(id)).filter(Boolean);
   const lastQ = state.questions[state.questions.length - 1];
-  const lastQBook = lastQ ? BY_ID.get(lastQ.bookId) : null;
-  const lastQObj = lastQBook ? lastQBook.questions[Number(lastQ.id.split("#")[1])] : null;
+  const lastQObj = lastQ ? Q_BY_ID.get(lastQ.id)?.q : null;
 
   let journeyHtml;
   if (j) {
@@ -512,6 +856,7 @@ function renderQuestion() {
         </div>
       </div>
     </section>
+    ${onboardingHtml()}
 
     ${questionSearchHtml()}
     ${lastQObj ? `
@@ -541,19 +886,35 @@ function renderLineage() {
 }
 
 /* ── 탭: 서재 ─────────────────────────────────────── */
-function renderLibrary() {
+function libraryBooks() {
   const q = libQuery.trim();
   let books = ALL.slice().sort((a, z) =>
     TIER_ORDER[a.tier] - TIER_ORDER[z.tier] || DOMAINS.indexOf(a.domain) - DOMAINS.indexOf(z.domain));
   if (libDomain !== "전체") books = books.filter((b) => b.domain === libDomain);
   if (libTier !== "전체") books = books.filter((b) => TIER_KO[b.tier] === libTier);
   if (q) books = books.filter((b) => b.title.includes(q) || b.author.includes(q));
+  return books;
+}
+
+// 목록 갱신 경계는 #lib-list 하나다. 검색 입력·칩·요약줄은 컨테이너 밖이라 타이핑 중 파괴되지 않는다(원장 1).
+// 권수는 목록과 같은 계산에서 나오므로 요약줄도 여기서 함께 맞춘다.
+function renderLibList() {
+  const books = libraryBooks();
   const total = books.length;
   const visibleBooks = books.slice(0, libVisibleCount);
+  document.getElementById("lib-list").innerHTML = `
+    ${total ? visibleBooks.map((b) => bookCard(b)).join("") : `<p class="empty">조건에 맞는 책이 없습니다.</p>`}
+    ${visibleBooks.length < total
+      ? `<button class="btn btn-light load-more" data-load-more="1">더 보기 · ${visibleBooks.length}/${total}권</button>`
+      : ""}`;
+  viewEl.querySelector(".library-summary").textContent =
+    `${libDomain === "전체" ? "전체 서재" : libDomain} · ${total}권`;
+}
 
+function renderLibrary() {
   viewEl.innerHTML = `
     ${IS_SEED ? `<div class="notice">시드 데이터 ${ALL.length}권 — 정식 천 권 리스트 교체 예정</div>` : ""}
-    <p class="library-summary">${libDomain === "전체" ? "전체 서재" : esc(libDomain)} · ${total}권</p>
+    <p class="library-summary"></p>
     <input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색">
     <div class="chips" role="group" aria-label="분야 필터">
       ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
@@ -561,20 +922,27 @@ function renderLibrary() {
     <div class="chips" role="group" aria-label="계단 필터">
       ${["전체", "뿌리", "줄기", "가지"].map((t) => `<button class="chip" data-libtier="${esc(t)}" aria-pressed="${t === libTier}">${esc(t)}</button>`).join("")}
     </div>
-    ${total ? visibleBooks.map((b) => bookCard(b)).join("") : `<p class="empty">조건에 맞는 책이 없습니다.</p>`}
-    ${visibleBooks.length < total
-      ? `<button class="btn btn-light load-more" data-load-more="1">더 보기 · ${visibleBooks.length}/${total}권</button>`
-      : ""}`;
+    <div id="lib-list"></div>`;
+  renderLibList();
   const input = document.getElementById("lib-search");
-  input.addEventListener("input", () => {
-    libQuery = input.value;
-    libVisibleCount = LIB_PAGE_SIZE;
-    const pos = input.selectionStart;
-    renderLibrary();
-    const again = document.getElementById("lib-search");
-    again.focus();
-    again.setSelectionRange(pos, pos);
+  libComposing = false;                      // 새 입력 노드 — 조합 잠금 초기화
+  input.addEventListener("compositionstart", () => { libComposing = true; });
+  input.addEventListener("input", (e) => {
+    if (e.isComposing || libComposing) { libQuery = input.value; return; }  // 조합 중: 값만 갱신하고 렌더 보류
+    applyLibQuery(input);
   });
+  input.addEventListener("compositionend", () => {
+    libComposing = false;
+    applyLibQuery(input);                    // 조합 확정 시 1회만 렌더
+  });
+}
+
+// 목록만 다시 그리므로 입력 노드와 선택 위치는 그대로 남는다 — 조합 잠금은 조합 중 렌더 보류용이다(원장 1).
+function applyLibQuery(input) {
+  if (!input.isConnected) return;            // 이미 렌더로 교체된 노드의 뒤늦은 이벤트
+  libQuery = input.value;
+  libVisibleCount = LIB_PAGE_SIZE;
+  renderLibList();
 }
 
 /* ── 탭: 기록 ─────────────────────────────────────── */
@@ -589,8 +957,8 @@ function renderRecord() {
 
   const qa = state.questions.map((x) => {
     const b = BY_ID.get(x.bookId);
-    const qObj = b ? b.questions[Number(x.id.split("#")[1])] : null;
-    if (!qObj) return "";
+    const qObj = Q_BY_ID.get(x.id)?.q;
+    if (!b || !qObj) return "";
     return `
       <div class="card qa-item">
         <p class="q">${esc(qObj.text)}</p>
@@ -610,7 +978,13 @@ function renderRecord() {
       </div>`;
   }).join("");
 
+  // 격리 보존 고지 — 기록 탭에서만 1회 알린다(DI-1 · 원장 11).
+  const orphanNotice = state.orphans.length
+    ? `<div class="notice" data-orphan-notice="1">책 목록이 바뀌어 연결이 끊긴 기록 ${state.orphans.length}건을 지우지 않고 따로 보관했습니다. 해당 책이 목록에 돌아오면 다시 이어집니다.</div>`
+    : "";
+
   viewEl.innerHTML = `
+    ${orphanNotice}
     <p class="section-label">계보 진행률 (읽음 기준)</p>
     <div class="card">${domainRows}</div>
     <p class="section-label">나만의 문답집 — 개인 기록 전용</p>
@@ -626,7 +1000,7 @@ function renderSheet(bookId) {
   const st = readStatus(b.id);
   const stLabel = { none: "안 읽음", reading: "읽는 중", read: "읽음" }[st];
   const qs = b.questions.map((q, i) => {
-    const qid = `${b.id}#${i}`;
+    const qid = questionId(b, i);
     const collected = state.questions.some((x) => x.id === qid);
     return `
       <div class="book-q">
@@ -744,33 +1118,67 @@ function renderJourneyDetail() {
       </div>`;
   }).join("");
 
-  const next = JOURNEYS.find((x) => x.id !== j.id && !state.journeysDone.some((d) => d.id === x.id));
-  const doneCard = allDone ? `
-    <div class="journey-done">
-      <p class="q-kicker">여정 완료</p>
-      <p class="q">${esc(j.question.text)} — 이 질문에 대한 나의 답은 무엇인가.</p>
-      <textarea id="j-answer" placeholder="나의 답 (기기에만 보관)"></textarea>
-      <div class="sheet-actions">
-        <button class="btn btn-light" data-finish-journey="${j.id}">여정 완료로 저장</button>
-      </div>
-    </div>
-    ${next ? `<p class="next-suggest">다음 여정 — ${esc(next.domain)} · ${esc(next.question.text)}</p>` : ""}` : "";
-
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 진행" tabindex="-1">
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="여정 진행 닫기">닫기</button>
         <div class="q-card" style="margin-bottom:12px">
-          <p class="q-kicker">${esc(j.domain)} 여정 · ${doneIds.length}/${j.bookIds.length}권</p>
+          <p class="q-kicker">${esc(journeyProgressText(j, doneIds))}</p>
           <p class="q-text" style="font-size:19px">${esc(j.question.text)}</p>
           <p class="q-source">${esc(j.question.source)}</p>
         </div>
         ${books}
-        ${doneCard}
+        <div id="journey-done-wrap">${journeyDoneHtml(j, allDone)}</div>
+        <div class="sheet-actions">
+          <button class="btn btn-ghost" data-quit-journey="${j.id}">여정 그만두기</button>
+        </div>
       </div>
     </div>`;
   overlayRoot.querySelector(".sheet").focus();
+}
+
+function journeyProgressText(j, doneIds) {
+  return `${j.domain} 여정 · ${doneIds.length}/${j.bookIds.length}권`;
+}
+
+// 완료 답 초안은 state.journeyDraft 가 원천이므로 이 카드가 다시 그려져도 쓰던 답이 남는다.
+function journeyDoneHtml(j, allDone) {
+  if (!allDone) return "";
+  const next = JOURNEYS.find((x) => x.id !== j.id && !state.journeysDone.some((d) => d.id === x.id));
+  return `
+    <div class="journey-done">
+      <p class="q-kicker">여정 완료</p>
+      <p class="q">${esc(j.question.text)} — 이 질문에 대한 나의 답은 무엇인가.</p>
+      <label class="sr-only" for="j-answer">이 질문에 대한 나의 답</label>
+      <textarea id="j-answer" data-answer-draft="1" maxlength="10000"
+        placeholder="나의 답 (기기에만 보관)">${esc(state.journeyDraft)}</textarea>
+      <div class="sheet-actions">
+        <button class="btn btn-light" data-finish-journey="${j.id}">여정 완료로 저장</button>
+      </div>
+    </div>
+    ${next ? `<p class="next-suggest">다음 여정 — ${esc(next.domain)} · ${esc(next.question.text)}</p>` : ""}`;
+}
+
+/* 체크박스 조작은 전면 재렌더 대신 체크 상태·진행 문구·완료 카드 표시 여부만 갱신한다(원장 9). */
+function updateJourneyDetail() {
+  const j = state.journey ? JOURNEYS.find((x) => x.id === state.journey.id) : null;
+  if (!j) { render(); return; }
+  const doneIds = state.journey.doneBookIds;
+  j.bookIds.forEach((id, index) => {
+    const box = overlayRoot.querySelector(`[data-jcheck="${id}"]`);
+    if (!box) return;
+    const checked = doneIds.includes(id);
+    const locked = !checked && !j.bookIds.slice(0, index).every((previousId) => doneIds.includes(previousId));
+    box.checked = checked;
+    box.disabled = locked;
+    box.closest(".journey-check").classList.toggle("is-locked", locked);
+  });
+  const kicker = overlayRoot.querySelector(".q-card .q-kicker");
+  if (kicker) kicker.textContent = journeyProgressText(j, doneIds);
+  const wrap = overlayRoot.querySelector("#journey-done-wrap");
+  const allDone = j.bookIds.every((id) => doneIds.includes(id));
+  if (wrap && Boolean(wrap.firstElementChild) !== allDone) wrap.innerHTML = journeyDoneHtml(j, allDone);
 }
 
 /* ── 오버레이: 내 서재 (F9, 로컬 프로필) ───────────── */
@@ -796,6 +1204,130 @@ function renderProfile() {
   overlayRoot.querySelector(".sheet").focus();
 }
 
+/* ── 오버레이: 설정 (F4 맞춤설정·기록 관리, 원장 8) ─── */
+let resetArmed = false;   // 기록 초기화는 확인 1회를 받는다(C6-4)
+
+function renderSettings() {
+  overlayRoot.innerHTML = `
+    <div class="sheet-backdrop" data-close-overlay="1">
+      <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
+        <div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="설정 닫기">닫기</button>
+        <h2 id="settings-title">설정</h2>
+        <p class="meta">고른 값은 이 기기에 저장되어 다음 방문에도 그대로 열립니다.</p>
+        <p class="section-label">관심 분야</p>
+        <div class="chips" role="group" aria-label="관심 분야 선택">
+          ${DOMAINS.map((d) => `<button class="chip" data-setdomain="${esc(d)}" aria-pressed="${d === sessionDomain}">${esc(d)}</button>`).join("")}
+        </div>
+        <div class="settings-list">
+          <button class="settings-row" data-toggle-theme="1" aria-label="화면 색 바꾸기, 지금은 ${state.theme === "navy" ? "남색" : "은회"}">
+            <span>화면 색</span><span class="value">${state.theme === "navy" ? "남색" : "은회"}</span>
+          </button>
+          <button class="settings-row" data-tab="record">
+            <span>내 기록 보기</span><span class="value">기록 탭</span>
+          </button>
+        </div>
+        <p class="section-label">기록 관리</p>
+        <div class="sheet-actions">
+          <button class="btn btn-light" data-export-records="1">파일로 내보내기</button>
+          <label class="sr-only" for="import-file">불러올 기록 파일</label>
+          <input class="search" id="import-file" type="file" accept="application/json,.json">
+          <button class="btn btn-light" data-import-records="1">고른 파일 불러오기</button>
+          ${resetArmed
+            ? `<p class="profile-note">지우면 되돌릴 수 없습니다. 읽음 표시·수집한 질문·답·여정 진행·저장한 이름이 함께 사라집니다.</p>
+               <button class="btn btn-primary" data-reset-confirm="1">기록 모두 지우기 실행</button>
+               <button class="btn btn-ghost" data-reset-cancel="1">취소</button>`
+            : `<button class="btn btn-ghost" data-reset-records="1">기록 모두 지우기</button>`}
+        </div>
+        <p class="profile-note">내보낸 파일은 이 기기 안에서만 만들어집니다.</p>
+      </div>
+    </div>`;
+  overlayRoot.querySelector(".sheet").focus();
+}
+
+// 내보내기는 Blob 과 a[download] 로만 만든다 — 어떤 경로로도 기록을 밖으로 보내지 않는다(DI-7).
+function exportRecords() {
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }));
+  link.href = url;
+  link.download = `천책빵-기록-${today()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  announce("기록 파일을 내보냈습니다.");
+}
+
+// 불러오기는 sanitizeState 를 반드시 통과시킨다. 기준선을 현재 저장값으로 맞춰 불러온 기록이 병합에 밀리지 않게 한다.
+async function importRecords(file, button) {
+  let payload = null;
+  try { payload = JSON.parse(await file.text()); } catch { payload = null; }
+  if (!payload || typeof payload !== "object") {
+    button.disabled = false;
+    announce("파일 형식이 달라 기록을 불러오지 못했습니다.");
+    showSaveAlert("고른 파일이 천책빵 기록 형식이 아닙니다. 내보내기로 만든 파일을 고르세요.");
+    return;
+  }
+  const backup = cloneState(state);
+  const stored = readStored();
+  syncedSnapshot = stored ? sanitizeState(stored) : sanitizeState();
+  Object.assign(state, sanitizeState(payload));
+  if (!save()) {
+    Object.assign(state, backup);
+    syncedSnapshot = cloneState(backup);
+    button.disabled = false;
+    return;
+  }
+  heroQuestion = Q_BY_ID.get(state.lastHeroQuestionId) || heroQuestion;
+  applyTheme();
+  sessionDomain = state.prefs.lineageDomain || mostReadDomain() || DOMAINS[0];
+  libDomain = state.prefs.libDomain;
+  libTier = state.prefs.libTier;
+  libVisibleCount = LIB_PAGE_SIZE;
+  announce("파일에서 기록을 불러왔습니다.");
+  render();
+}
+
+// 저장소만 지우면 다음 save 에서 되살아난다. 인메모리 state 와 병합 기준선을 정화 함수로 재초기화한다(C6-3).
+function resetRecords() {
+  const fresh = sanitizeState({
+    theme: state.theme,
+    prefs: state.prefs,
+    onboardingDismissed: state.onboardingDismissed,
+  });
+  try { localStorage.removeItem(STORE_KEY); } catch { /* 실패 여부는 아래 save 결과로 판정한다 */ }
+  Object.assign(state, fresh);
+  syncedSnapshot = cloneState(fresh);
+  heroQuestion = drawQuestion();
+  resetArmed = false;
+  announce(save() ? "이 기기에 남아 있던 기록을 모두 지웠습니다." : SAVE_FAIL_NOTICE);
+  dismissOverlay();
+}
+
+/* ── 배포 갱신 통지 수신 (§6-3, 원장 12) ───────────── */
+let updateReady = false;
+
+// 통지를 받자마자 reload 하면 읽던 자리와 히스토리를 잃는다. 안전한 시점에만 안내를 띄운다.
+function updateMomentSafe() {
+  if (!exitEl.hidden) return false;                              // 종료 팝업 표시 중
+  if (top().overlay) return false;                               // 오버레이 표시 중
+  const focused = document.activeElement;
+  return !(focused instanceof HTMLTextAreaElement || focused instanceof HTMLInputElement);   // 입력 중
+}
+
+function updateNoticeHtml() {
+  return `
+    <div class="notice" role="status">
+      <p>새 버전을 받았습니다.</p>
+      <button class="btn btn-light" data-apply-update="1">지금 적용하기</button>
+    </div>`;
+}
+
+// 홈은 히어로 질문 다음에 끼운다 — 최상단은 질문 카드 자리다(INV-1). 다른 탭은 화면 첫머리에 둔다.
+function insertUpdateNotice() {
+  const hero = viewEl.querySelector(".q-card")?.closest("section");
+  if (hero) hero.insertAdjacentHTML("afterend", updateNoticeHtml());
+  else viewEl.insertAdjacentHTML("afterbegin", updateNoticeHtml());
+}
+
 /* ── 전체 렌더 ─────────────────────────────────────── */
 function render() {
   const v = top();
@@ -808,6 +1340,7 @@ function render() {
   else if (v.tab === "lineage") renderLineage();
   else if (v.tab === "library") renderLibrary();
   else renderRecord();
+  if (updateReady && updateMomentSafe()) insertUpdateNotice();
 
   if (!v.overlay) overlayRoot.innerHTML = "";
   else if (v.overlay.type === "sheet") renderSheet(v.overlay.bookId);
@@ -815,6 +1348,7 @@ function render() {
   else if (v.overlay.type === "jlist") renderJourneyList();
   else if (v.overlay.type === "jdetail") renderJourneyDetail();
   else if (v.overlay.type === "profile") renderProfile();
+  else if (v.overlay.type === "settings") renderSettings();
 
   const pb = document.getElementById("profile-btn");
   pb.textContent = state.profile ? `${state.profile.name}님` : "내 서재";
@@ -830,30 +1364,62 @@ function scrollPageTop() {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-close-overlay]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
   if (t.dataset.home) {
     goHome();
+  } else if (t.dataset.applyUpdate) {
+    t.disabled = true;                        // 확인은 1회만 받는다
+    location.reload();
   } else if (t.dataset.toggleTheme) {
-    state.theme = state.theme === "navy" ? "silver" : "navy";
+    // 상단 토글과 설정 오버레이가 같은 값을 바꾼다 — 단일 출처는 state.theme 다.
+    const next = state.theme === "navy" ? "silver" : "navy";
+    if (!commit(() => { state.theme = next; })) return;
     applyTheme();
-    save();
     render();
   } else if (t.dataset.openProfile) {
     pushView({ tab: top().tab, overlay: { type: "profile" } });
+  } else if (t.dataset.openSettings) {
+    resetArmed = false;
+    pushView({ tab: top().tab, overlay: { type: "settings" } });
+  } else if (t.dataset.dismissOnboard) {
+    if (!commit(() => { state.onboardingDismissed = true; })) return;
+    render();
+  } else if (t.dataset.setdomain) {
+    const domain = t.dataset.setdomain;
+    if (!commit(() => { state.prefs.lineageDomain = domain; })) return;
+    sessionDomain = domain;
+    render();
+  } else if (t.dataset.exportRecords) {
+    exportRecords();
+  } else if (t.dataset.importRecords) {
+    const input = document.getElementById("import-file");
+    const file = input?.files?.[0];
+    if (!file) { announce("불러올 파일을 먼저 고르세요."); return; }
+    t.disabled = true;
+    importRecords(file, t);
+  } else if (t.dataset.resetRecords) {
+    resetArmed = true;
+    render();
+  } else if (t.dataset.resetCancel) {
+    resetArmed = false;
+    render();
+  } else if (t.dataset.resetConfirm) {
+    t.disabled = true;
+    resetRecords();
   } else if (t.dataset.saveProfile) {
+    t.disabled = true;                        // 진입 즉시 중복 탭 차단
     const input = document.getElementById("profile-name");
     const name = input.value.trim();
     const alertEl = document.getElementById("profile-alert");
-    if (!name) { alertEl.hidden = false; input.focus(); return; }
-    state.profile = { name };
-    save();
-    history.back(); // 프로필 시트 닫기
+    if (!name) { t.disabled = false; alertEl.hidden = false; input.focus(); return; }
+    if (!commit(() => { state.profile = { name }; })) { t.disabled = false; return; }
+    dismissOverlay(); // 프로필 시트 닫기
   } else if (t.dataset.clearProfile) {
-    state.profile = null;
-    save();
-    history.back();
+    t.disabled = true;
+    if (!commit(() => { state.profile = null; })) { t.disabled = false; return; }
+    dismissOverlay();
   } else if (t.dataset.tab) {
     if (t.dataset.tab === "question") { goHome(); return; }   // 홈 탭 = 첫 화면 복귀로 통일
     const cur = top();
@@ -862,61 +1428,89 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
-    state.rootArrivals += 1;
-    save();
+    commit(() => { state.rootArrivals += 1; });   // 저장 거부는 배너로 알리고 카운터만 되돌린다
     pushView({ tab: top().tab, overlay: { type: "trail", bookId: t.dataset.openTrail } });
   } else if (t.dataset.openJlist) {
     pushView({ tab: top().tab, overlay: { type: "jlist" } });
   } else if (t.dataset.openJdetail) {
     pushView({ tab: top().tab, overlay: { type: "jdetail" } });
   } else if (t.dataset.startJourney) {
-    if (!state.journey) { state.journey = { id: t.dataset.startJourney, doneBookIds: [] }; save(); }
+    const journeyId = t.dataset.startJourney;
+    if (!state.journey) {
+      if (!commit(() => { state.journey = { id: journeyId, doneBookIds: [] }; state.journeyDraft = ""; })) return;
+    }
     pushView({ tab: top().tab, overlay: { type: "jdetail" } });
   } else if (t.dataset.finishJourney) {
+    t.disabled = true;
+    const journeyId = t.dataset.finishJourney;
+    // 중복 기록 가드(N-8): 이미 완료했거나 진행 중 여정이 아니면 닫기만 한다.
+    if (state.journey?.id !== journeyId || state.journeysDone.some((x) => x.id === journeyId)) {
+      dismissOverlay();
+      return;
+    }
     const ans = document.getElementById("j-answer");
-    state.journeysDone.push({ id: t.dataset.finishJourney, date: today(), myAnswer: ans ? ans.value : "" });
-    state.journey = null;
-    save();
-    history.back(); // 여정 화면 닫기 → 이전 화면
+    const myAnswer = ans ? ans.value : state.journeyDraft;
+    if (!commit(() => {
+      state.journeysDone.push({ id: journeyId, date: today(), myAnswer });
+      state.journey = null;
+      state.journeyDraft = "";
+    })) { t.disabled = false; return; }
+    dismissOverlay(); // 여정 화면 닫기 → 이전 화면
+  } else if (t.dataset.quitJourney) {
+    t.disabled = true;
+    if (!commit(() => { state.journey = null; state.journeyDraft = ""; })) { t.disabled = false; return; }
+    announce("진행 중이던 여정을 그만두었습니다.");
+    dismissOverlay();
   } else if (t.dataset.collect) {
-    const [bookId] = t.dataset.collect.split("#");
-    if (!state.questions.some((x) => x.id === t.dataset.collect)) {
-      state.questions.push({ id: t.dataset.collect, bookId, date: today(), myAnswer: "" });
-      save();
+    const questionKey = t.dataset.collect;
+    if (!state.questions.some((x) => x.id === questionKey)) {
+      const bookId = Q_BY_ID.get(questionKey)?.bookId;
+      if (!bookId) return;
+      // 저장이 거부되면 수집됨 표시로 넘어가지 않는다(DI-4).
+      if (!commit(() => { state.questions.push({ id: questionKey, bookId, date: today(), myAnswer: "" }); })) return;
     }
     render();
   } else if (t.dataset.shuffle) {
     heroQuestion = drawQuestion();
+    save();                                   // 추첨 확정 시점(원장 3). 실패는 save 안에서 배너·낭독으로 알린다
     render();
   } else if (t.dataset.openDomainList) {
+    const domain = t.dataset.openDomainList;
+    commit(() => { state.prefs.libDomain = domain; state.prefs.libTier = "전체"; });
     libQuery = "";
-    libDomain = t.dataset.openDomainList;
+    libDomain = domain;
     libTier = "전체";
     libVisibleCount = LIB_PAGE_SIZE;
     pushView({ tab: "library", overlay: null });
     scrollPageTop();
   } else if (t.dataset.domain) {
-    sessionDomain = t.dataset.domain;
+    const domain = t.dataset.domain;
+    if (!commit(() => { state.prefs.lineageDomain = domain; })) return;
+    sessionDomain = domain;
     render();
   } else if (t.dataset.libdomain) {
-    libDomain = t.dataset.libdomain;
+    const domain = t.dataset.libdomain;
+    if (!commit(() => { state.prefs.libDomain = domain; })) return;
+    libDomain = domain;
     libVisibleCount = LIB_PAGE_SIZE;
     render();
   } else if (t.dataset.libtier) {
-    libTier = t.dataset.libtier;
+    const tier = t.dataset.libtier;
+    if (!commit(() => { state.prefs.libTier = tier; })) return;
+    libTier = tier;
     libVisibleCount = LIB_PAGE_SIZE;
     render();
   } else if (t.dataset.loadMore) {
     libVisibleCount += LIB_PAGE_SIZE;
-    render();
+    renderLibList();                               // 목록만 이어 그린다 — 검색 입력·칩은 그대로 둔다
   } else if (t.dataset.cycleRead) {
-    cycleRead(t.dataset.cycleRead);
+    if (!cycleRead(t.dataset.cycleRead)) return;   // 저장 실패 시 읽음 배지를 켜지 않는다(DI-4)
     render();
   } else if (t.dataset.gotoLineage) {
     sessionDomain = t.dataset.gotoLineage;
     pushView({ tab: "lineage", overlay: null });
   } else if (t.dataset.closeOverlay) {
-    if (e.target === t) history.back(); // 배경 탭 = 뒤로가기와 동일
+    if (e.target === t) dismissOverlay(); // 배경 탭·닫기 버튼 = 같은 단일 경로
   }
 });
 
@@ -939,18 +1533,23 @@ document.addEventListener("change", (e) => {
   const id = c.dataset.jcheck;
   const journey = JOURNEYS.find((item) => item.id === state.journey.id);
   const index = journey ? journey.bookIds.indexOf(id) : -1;
-  if (c.checked) {
+  const checked = c.checked;
+  if (checked) {
     const previousDone = index >= 0 && journey.bookIds.slice(0, index)
       .every((previousId) => state.journey.doneBookIds.includes(previousId));
     if (!previousDone) { c.checked = false; return; }
-    if (!state.journey.doneBookIds.includes(id)) state.journey.doneBookIds.push(id);
-    setReadStatus(id, "read"); // 여정 체크 = 읽음 처리
-  } else {
-    const removeIds = new Set(journey ? journey.bookIds.slice(index) : [id]);
-    state.journey.doneBookIds = state.journey.doneBookIds.filter((x) => !removeIds.has(x));
   }
-  save();
-  render();
+  // 진행과 읽음 처리를 한 번에 확정한다. 저장이 거부되면 체크 상태도 되돌려 그린다(DI-4).
+  commit(() => {
+    if (checked) {
+      if (!state.journey.doneBookIds.includes(id)) state.journey.doneBookIds.push(id);
+      applyReadStatus(id, "read"); // 여정 체크 = 읽음 처리
+    } else {
+      const removeIds = new Set(journey ? journey.bookIds.slice(index) : [id]);
+      state.journey.doneBookIds = state.journey.doneBookIds.filter((x) => !removeIds.has(x));
+    }
+  });
+  updateJourneyDetail();
 });
 
 document.addEventListener("input", (e) => {
@@ -964,6 +1563,12 @@ document.addEventListener("input", (e) => {
   if (ja) {
     const item = state.journeysDone.find((x) => x.id === ja.dataset.answerJ);
     if (item) { item.myAnswer = ja.value.slice(0, 10000); scheduleSave(); }
+    return;
+  }
+  const draft = e.target.closest("[data-answer-draft]");
+  if (draft && state.journey) {
+    state.journeyDraft = draft.value.slice(0, 10000);
+    scheduleSave();
   }
 });
 
@@ -972,5 +1577,11 @@ render();
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js", { updateViaCache: "none" });
+  });
+  // 서비스워커는 갱신 사실만 통지한다. 적용 시점은 방문자가 고른다(원장 12).
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type !== "ccb-updated" || updateReady) return;
+    updateReady = true;
+    if (updateMomentSafe()) render();
   });
 }

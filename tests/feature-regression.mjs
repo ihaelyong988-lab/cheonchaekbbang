@@ -73,15 +73,15 @@ try {
 
   // 서재 1,000권 확장 대비: 80권 단위 지연 렌더링.
   await page.locator('.tab[data-tab="library"]').click();
-  assert.equal(await page.locator(".view > .card").count(), 80);
+  assert.equal(await page.locator("#lib-list > .card").count(), 80);
   assert.equal(await page.locator(".load-more").textContent(), "더 보기 · 80/175권");
   await page.locator(".load-more").click();
-  assert.equal(await page.locator(".view > .card").count(), 160);
+  assert.equal(await page.locator("#lib-list > .card").count(), 160);
   await page.locator(".load-more").click();
-  assert.equal(await page.locator(".view > .card").count(), 175);
+  assert.equal(await page.locator("#lib-list > .card").count(), 175);
 
   // 일반 시트의 모달 의미, 배경 inert, 포커스 트랩, Escape, 호출 위치 복귀.
-  const firstCard = page.locator(".view > .card").first();
+  const firstCard = page.locator("#lib-list > .card").first();
   const firstBookId = await firstCard.getAttribute("data-open-book");
   await firstCard.focus();
   await firstCard.click();
@@ -99,7 +99,7 @@ try {
 
   // 뿌리 도달은 실제 따라가기 동작당 한 번만 증가하며 중첩 렌더에서 중복되지 않는다.
   await page.locator('[data-libtier="가지"]').click();
-  await page.locator(".view > .card").first().click();
+  await page.locator("#lib-list > .card").first().click();
   const branchId = await page.locator("[data-open-trail]").getAttribute("data-open-trail");
   await page.locator("[data-open-trail]").click();
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).rootArrivals), 1);
@@ -147,6 +147,17 @@ try {
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).journey.doneBookIds.length), 1);
   assert.deepEqual(await page.locator("[data-jcheck]").evaluateAll((items) => items.map((item) => item.disabled)), [false, false, true, true]);
   for (let index = 1; index < 4; index += 1) await page.locator("[data-jcheck]").nth(index).check();
+
+  // G-3 초안 보존 — 체크박스 해제·재체크가 완료 답 초안을 지우지 않는다(원장 9).
+  const journeyDraft = "체크를 고치는 동안 지워지면 안 되는 초안";
+  await page.locator("#j-answer").fill(journeyDraft);
+  await page.waitForTimeout(320);
+  await page.locator("[data-jcheck]").nth(3).uncheck();
+  await page.locator("[data-jcheck]").nth(3).check();
+  await page.waitForTimeout(320);
+  assert.equal(await page.locator("#j-answer").inputValue(), journeyDraft, "체크박스 조작 후 완료 답 초안이 입력 요소에서 사라졌습니다.");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).journeyDraft), journeyDraft, "저장된 완료 답 초안이 입력 문자열과 다릅니다.");
+
   await page.locator("#j-answer").fill("뿌리부터 순서대로 읽은 답");
   const journeyId = await page.locator("[data-finish-journey]").getAttribute("data-finish-journey");
   await page.locator("[data-finish-journey]").click();
@@ -182,9 +193,15 @@ try {
   assert.equal(cleaned.questions.length, 1);
   assert.equal(cleaned.questions[0].bookId, "plato-republic");
   assert.equal(cleaned.questions[0].myAnswer.length, 10000);
-  assert.deepEqual(cleaned.journey.doneBookIds, ["plato-republic"]);
+  // 여정 진행은 첫 결번에서 절단하지 않고 결번만 건너뛴다(원장 11 처방).
+  assert.deepEqual(cleaned.journey.doneBookIds, ["plato-republic", "sandel-justice"]);
   assert.equal(cleaned.journeysDone.length, 1);
   assert.equal(cleaned.theme, "silver");
+  // 카탈로그에 없는 참조는 삭제가 아니라 격리 보존한다(DI-1). 중복·읽음 우선·상한·테마 정화는 그대로 유지된다.
+  assert.ok(Array.isArray(cleaned.orphans), "격리 보존 필드 state.orphans 가 없습니다.");
+  const corruptOrphanIds = new Set(cleaned.orphans.map((item) => item.id));
+  assert.equal(corruptOrphanIds.has("missing"), true, "카탈로그에 없는 읽음·읽는 중 참조가 격리되지 않았습니다.");
+  assert.equal(corruptOrphanIds.has("missing#0"), true, "카탈로그에 없는 질문 참조가 격리되지 않았습니다.");
   assert.equal(await corrupt.page.locator("#profile-btn img").count(), 0);
   assert.equal(await corrupt.page.evaluate(() => document.body.dataset.hacked), undefined);
   assert.deepEqual(corrupt.errors, []);
@@ -202,8 +219,80 @@ try {
   await quota.page.waitForTimeout(80);
   assert.equal(await quota.page.locator('.tab[aria-current="page"] span').textContent(), "홈");
   assert.match(await quota.page.locator("#app-status").textContent(), /저장 공간이 부족/u);
+
+  // G-5 낙관적 UI 금지 — 저장이 실패한 수집은 완료 표시로 바뀌지 않고 보이는 오류 1건이 뜬다(원장 10 · DI-4).
+  // 라이브 리전 문구는 배너 도입 후에도 유지돼야 하므로 문구 자체가 아니라 클릭 전후 동일성을 단언한다.
+  const quotaCollect = quota.page.locator("[data-collect]").first();
+  const collectLabelBefore = await quotaCollect.textContent();
+  const liveNoticeBefore = await quota.page.locator("#app-status").textContent();
+  await quotaCollect.click();
+  await quota.page.waitForTimeout(120);
+  assert.equal(await quota.page.locator("[data-collect]").first().textContent(), collectLabelBefore, "저장이 실패했는데 수집 버튼이 완료 표시로 바뀌었습니다.");
+  assert.equal(await quota.page.locator("[data-collect]").first().isDisabled(), false, "저장이 실패했는데 수집 버튼이 완료 상태로 잠겼습니다.");
+  assert.equal(await quota.page.locator('[role="alert"]:visible').count(), 1, "저장 실패를 알리는 가시 오류가 1건이 아닙니다.");
+  assert.equal(await quota.page.locator("#app-status").textContent(), liveNoticeBefore, "배너가 기존 라이브 리전 문구를 대체했습니다.");
   assert.deepEqual(quota.errors, []);
   await quota.context.close();
+
+  /* G-4 prefs 복원 — 계보 분야·서재 계단 선택은 복원하고 검색어는 복원하지 않는다(원장 5 · C5-1 · C5-2).
+     권수는 리터럴로 적지 않는다. 선택 전후 요약줄을 비교해 필터가 실제로 좁혔는지까지 함께 채점한다. */
+  const prefs = await freshPage();
+  await prefs.page.locator('.tab[data-tab="lineage"]').click();
+  const lineagePick = await prefs.page.locator("[data-domain]").nth(1).getAttribute("data-domain");
+  await prefs.page.locator(`[data-domain="${lineagePick}"]`).click();
+  await prefs.page.locator('.tab[data-tab="library"]').click();
+  const summaryAllTiers = await prefs.page.locator(".library-summary").textContent();
+  await prefs.page.locator('[data-libtier="뿌리"]').click();
+  const summaryRootTier = await prefs.page.locator(".library-summary").textContent();
+  assert.notEqual(summaryRootTier, summaryAllTiers, "계단 칩이 서재 요약 권수를 좁히지 못했습니다.");
+  const searchProbe = "복원되어서는 안 되는 검색어";
+  await prefs.page.locator("#lib-search").fill(searchProbe);
+  await prefs.page.waitForTimeout(120);
+  await prefs.page.reload({ waitUntil: "networkidle" });
+  await prefs.page.locator('.tab[data-tab="library"]').click();
+  assert.equal(await prefs.page.locator('[data-libtier="뿌리"]').getAttribute("aria-pressed"), "true", "서재 계단 칩 선택이 복원되지 않았습니다.");
+  assert.equal(await prefs.page.locator(".library-summary").textContent(), summaryRootTier, "복원된 서재 요약 권수가 선택값과 다릅니다.");
+  assert.equal(await prefs.page.locator("#lib-search").inputValue(), "", "서재 검색어가 복원됐습니다(C5-2 위반).");
+  await prefs.page.locator('.tab[data-tab="lineage"]').click();
+  assert.equal(await prefs.page.locator(`[data-domain="${lineagePick}"]`).getAttribute("aria-pressed"), "true", "계보 분야 칩 선택이 복원되지 않았습니다.");
+  const prefsSaved = await prefs.page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")));
+  assert.deepEqual(prefsSaved.prefs, { lineageDomain: lineagePick, libDomain: "전체", libTier: "뿌리" }, "영속 prefs 필드가 처방이 지정한 형태와 다릅니다.");
+  assert.equal(JSON.stringify(prefsSaved).includes(searchProbe), false, "검색어가 저장값에 남았습니다(C5-2 위반).");
+  assert.deepEqual(prefs.errors, []);
+  await prefs.context.close();
+
+  /* G-6 카탈로그 격리 보존 — 카탈로그에서 사라진 참조는 삭제하지 않고 격리하며 기록 탭에서 1회 고지한다(원장 11 · DI-1).
+     카탈로그 교체는 카탈로그에 없는 id 참조로 재현한다. 정화 코드가 타는 경로가 같다. */
+  const drift = await freshPage();
+  const keptAnswer = "카탈로그에 남은 책의 답";
+  const lostAnswer = "카탈로그가 바뀌어도 사라져서는 안 되는 답";
+  await drift.page.evaluate(([kept, lost]) => localStorage.setItem("cheonchaek.v1", JSON.stringify({
+    version: 2,
+    read: ["plato-republic", "retired-read"],
+    reading: ["retired-reading"],
+    questions: [
+      { id: "plato-republic#0", bookId: "plato-republic", date: "2026-07-20", myAnswer: kept },
+      { id: "retired-question#0", bookId: "retired-question", date: "2026-07-20", myAnswer: lost },
+    ],
+    journey: { id: "j-philosophy", doneBookIds: ["plato-republic"] },
+    journeysDone: [],
+    theme: "silver",
+  })), [keptAnswer, lostAnswer]);
+  await drift.page.reload({ waitUntil: "networkidle" });
+  const drifted = await drift.page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")));
+  assert.ok(Array.isArray(drifted.orphans), "격리 보존 필드 state.orphans 가 없습니다.");
+  assert.deepEqual(drifted.orphans.map((item) => item.id).sort(), ["retired-question#0", "retired-read", "retired-reading"], "격리 항목 수가 잃어버린 참조 수와 다릅니다.");
+  assert.equal(drifted.orphans.find((item) => item.id === "retired-question#0")?.myAnswer, lostAnswer, "격리된 질문의 답 원본이 보존되지 않았습니다.");
+  assert.deepEqual(drifted.read, ["plato-republic"], "카탈로그에 있는 읽음 기록이 함께 사라졌습니다.");
+  assert.equal(drifted.questions.length, 1, "카탈로그에 있는 질문 기록이 함께 사라졌습니다.");
+  assert.equal(drifted.questions[0].myAnswer, keptAnswer, "카탈로그에 있는 질문의 답이 사라졌습니다.");
+  await drift.page.locator('.tab[data-tab="record"]').click();
+  assert.equal(await drift.page.locator("#view [data-orphan-notice]").count(), 1, "기록 탭 격리 고지가 1회가 아닙니다.");
+  assert.equal(await drift.page.locator("#view [data-orphan-notice]").isVisible(), true, "기록 탭 격리 고지가 보이지 않습니다.");
+  await drift.page.locator('.tab[data-tab="question"]').click();
+  assert.equal(await drift.page.locator("#view [data-orphan-notice]").count(), 0, "격리 고지가 기록 탭 밖에도 노출됩니다.");
+  assert.deepEqual(drift.errors, []);
+  await drift.context.close();
 
   console.log(JSON.stringify({
     result: "pass",
@@ -213,9 +302,13 @@ try {
     readStateCycle: true,
     questionAnswerPersistence: true,
     journeyStrictOrder: true,
+    journeyDraftPreserved: true,
     corruptedStorageRecovery: true,
     xssEscaping: true,
     quotaFailureNotice: true,
+    optimisticUiBlocked: true,
+    prefsRestored: true,
+    orphanQuarantine: true,
   }, null, 2));
 } finally {
   await browser.close();
