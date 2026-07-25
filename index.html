@@ -24,12 +24,18 @@
 <body>
   <div class="app">
     <header class="topbar">
-      <h1 class="brand"><button class="brand-btn" data-home="1" aria-label="첫 화면으로">천책빵</button></h1>
-      <p class="brand-sub">뿌리를 찾는 서재</p>
+      <div class="brand-group">
+        <h1 class="brand"><button class="brand-btn" data-home="1" aria-label="첫 화면으로">천책빵</button></h1>
+        <p class="brand-sub">뿌리를 찾는 서재</p>
+      </div>
       <button id="theme-btn" class="theme-btn" data-toggle-theme="1"
         aria-label="남색 테마로 바꾸기">남색</button>
+      <button id="settings-btn" class="settings-btn" data-open-settings="1"
+        aria-label="설정 열기">설정</button>
       <button id="profile-btn" class="profile-btn" data-open-profile="1">내 서재</button>
     </header>
+
+    <div id="app-alert" class="app-alert" hidden></div>
 
     <main id="view" class="view" tabindex="-1"></main>
 

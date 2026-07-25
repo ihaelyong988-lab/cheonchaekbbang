@@ -66,6 +66,8 @@ body {
   align-items: center;
   gap: 10px;
 }
+/* 브랜드·부제를 세로로 묶어 컨트롤 3개 자리를 만든다 — 한 줄 배치는 360px 에서 여유 0이었다 */
+.brand-group { flex: 1; min-width: 0; }
 .brand { font-size: 19px; font-weight: 700; letter-spacing: 0.02em; display: flex; }
 .brand-btn {
   font: inherit; color: inherit;
@@ -76,7 +78,7 @@ body {
   border-radius: 10px; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.brand-sub { font-size: 12.5px; color: var(--muted); flex: 1; }
+.brand-sub { font-size: 12.5px; color: var(--muted); }
 .profile-btn {
   font-family: var(--sans);
   font-size: 13px; font-weight: 600;
@@ -88,7 +90,8 @@ body {
   padding: 6px 14px;
   cursor: pointer;
 }
-.theme-btn {
+.theme-btn,
+.settings-btn {
   font-family: var(--sans);
   font-size: 12px;
   font-weight: 700;
@@ -101,6 +104,10 @@ body {
   padding: 6px 10px;
   cursor: pointer;
 }
+
+/* 저장·불러오기 실패 배너 자리 — 상단바 바로 아래, 탭 재렌더와 무관하게 남는다 (§5-3 DI-4) */
+.app-alert { padding: 12px 16px 0; }
+.app-alert[hidden] { display: none; }
 
 /* ── 본문 ─────────────────────────── */
 .view {
@@ -224,6 +231,10 @@ body {
 .card-title { font-size: 15.5px; font-weight: 700; color: var(--ink); }
 .card-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
 .card-principle { font-size: 14px; color: var(--ink); margin-top: 8px; word-break: keep-all; }
+
+/* 첫 방문 1회 안내 — 히어로 직후, 카드 토큰 재사용 (§2-1 C2-2) */
+.onboard { background: var(--silver); border-color: var(--silver-line); }
+.onboard-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
 
 /* 티어 뱃지 */
 .tier {
@@ -377,6 +388,18 @@ body {
 .profile-input::placeholder { color: var(--muted); }
 .profile-note { font-size: 13px; color: var(--muted); margin-top: 10px; word-break: keep-all; }
 
+/* 설정 오버레이 — .sheet 를 그대로 쓰고 항목 행만 더한다 (§2-1 C4-1) */
+.settings-list { margin-top: 14px; }
+.settings-row {
+  width: 100%; min-height: 44px; gap: 12px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 2px; border: 0; border-bottom: 1px solid var(--line);
+  background: transparent; color: var(--ink);
+  font-family: var(--sans); font-size: 15px; text-align: left; cursor: pointer;
+}
+.settings-row:last-child { border-bottom: none; }
+.settings-row .value { flex: 0 0 auto; font-size: 13px; color: var(--muted); }
+
 /* 뿌리 따라가기 체인 */
 .trail-step { position: relative; }
 .trail-why {
@@ -441,6 +464,8 @@ body {
 }
 :focus-visible { outline: 2px solid var(--bronze); outline-offset: 2px; }
 [role="alert"] { font-size: 13.5px; color: #8A2A2A; }
+/* 보이는 실패 배너 — .notice 표면에 [role="alert"] 색을 그대로 얹는다 (은회 6.73:1 · 남색 8.63:1) */
+.save-alert { border-left: 3px solid currentColor; }
 
 html[data-theme="navy"] .tier-branch { background: #28455E; color: var(--muted); }
 html[data-theme="navy"] .badge-read { background: #274A3D; color: #D8EACF; }
