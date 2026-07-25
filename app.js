@@ -474,6 +474,12 @@ function top() { return currentView; }
 let overlayDismissing = false;   // history.back() 비동기 구간 재진입 잠금
 let tabbarLockTimer = 0;
 const TABBAR_LOCK_MS = 150;
+const TAP_THROUGH_SLOP = 16;          // 같은 자리 판정 허용치(px) — 손가락 흔들림
+const TAP_THROUGH_SETTLE_MS = 320;    // 복원 화면이 상호작용 가능해진 다음 프레임부터 세는 여유
+const TAP_THROUGH_FALLBACK_MS = 700;  // popstate 미도달 대비 안전 해제
+let tapGesture = null;                // 지금 처리 중인 클릭 제스처의 좌표
+let tapThrough = null;                // 닫힘을 일으킨 탭의 좌표
+let tapThroughTimer = 0;
 
 // 오버레이가 사라진 직후 같은 좌표의 탭바가 눌리는 관통을 막는다. inert는 쓰지 않는다(N-7).
 function lockTabbar() {
@@ -483,6 +489,55 @@ function lockTabbar() {
   tabbarLockTimer = setTimeout(() => tabbar.classList.remove("is-tap-locked"), TABBAR_LOCK_MS);
 }
 
+/* 오버레이가 닫히면 아래 화면이 즉시 그 자리로 올라온다. 되살아나는 시트는 배경이 아니어서
+   탭바 잠금이 닿지 않고, 시트 전체를 시간 창으로 잠그면 창이 끝난 뒤의 정상 조작까지 죽는다.
+   그래서 닫힘을 일으킨 탭의 좌표만 무효로 한다 — 다른 자리 탭은 잠기지 않고 즉시 가드를 걷는다.
+   해제 기준은 상수 하나가 아니라 복원 렌더가 화면에 오른 다음 프레임이다(N-7). */
+function armTapThrough() {
+  if (!tapGesture) return;              // 키보드·프로그램 호출은 관통할 좌표가 없다
+  tapThrough = tapGesture;
+  clearTimeout(tapThroughTimer);
+  tapThroughTimer = setTimeout(releaseTapThrough, TAP_THROUGH_FALLBACK_MS);
+}
+
+function releaseTapThrough() {
+  tapThrough = null;
+  if (tapThroughTimer) { clearTimeout(tapThroughTimer); tapThroughTimer = 0; }
+}
+
+function scheduleTapThroughRelease() {
+  if (!tapThrough) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (!tapThrough) return;
+    clearTimeout(tapThroughTimer);
+    tapThroughTimer = setTimeout(releaseTapThrough, TAP_THROUGH_SETTLE_MS);
+  }));
+}
+
+// 같은 자리 = 관통으로 보고 포인터 이벤트를 무효화한다. 다른 자리 = 새 제스처이므로 가드를 걷는다.
+function swallowTapThrough(e) {
+  if (!tapThrough) return false;
+  if (e.type === "click" && e.detail === 0) return false;   // 키보드 활성화는 좌표를 남기지 않는다
+  if (Math.abs(e.clientX - tapThrough.x) > TAP_THROUGH_SLOP
+    || Math.abs(e.clientY - tapThrough.y) > TAP_THROUGH_SLOP) {
+    releaseTapThrough();
+    return false;
+  }
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.type === "click") releaseTapThrough();              // 한 번 무효화하면 다음 탭은 정상 조작이다
+  return true;
+}
+
+document.addEventListener("pointerdown", swallowTapThrough, true);
+document.addEventListener("pointerup", swallowTapThrough, true);
+// 닫힘을 일으킨 제스처의 좌표는 이 제스처가 처리되는 동안에만 유효하다 — 뒤늦은 ESC 닫힘은 무장하지 않는다.
+document.addEventListener("click", (e) => {
+  if (swallowTapThrough(e)) return;
+  tapGesture = e.detail > 0 ? { x: e.clientX, y: e.clientY } : null;
+}, true);
+window.addEventListener("click", () => { tapGesture = null; });
+
 // 배경 탭·닫기 버튼·ESC·저장 후 닫기가 모두 이 함수만 경유한다. history.back() 호출부는 여기 1곳이다.
 function dismissOverlay() {
   if (appClosed) return;
@@ -490,6 +545,7 @@ function dismissOverlay() {
   if (!top().overlay) return;
   overlayDismissing = true;
   lockTabbar();
+  armTapThrough();
   history.back();
 }
 
@@ -519,6 +575,7 @@ window.addEventListener("popstate", (e) => {
   currentView = entry.view;
   if (!entry.known) history.replaceState({ i: pointer, view: currentView }, "");   // 미지 항목 인덱스 재기입(N-3)
   render();
+  scheduleTapThroughRelease();                        // 복원 렌더 다음 프레임부터 관통 가드 해제를 센다(N-7)
   if (hadOverlay && !top().overlay) {
     lockTabbar();                                     // 해제 직후 배경 탭바 잠금(N-7)
     requestAnimationFrame(restoreOverlayFocus);
@@ -829,19 +886,35 @@ function renderLineage() {
 }
 
 /* ── 탭: 서재 ─────────────────────────────────────── */
-function renderLibrary() {
+function libraryBooks() {
   const q = libQuery.trim();
   let books = ALL.slice().sort((a, z) =>
     TIER_ORDER[a.tier] - TIER_ORDER[z.tier] || DOMAINS.indexOf(a.domain) - DOMAINS.indexOf(z.domain));
   if (libDomain !== "전체") books = books.filter((b) => b.domain === libDomain);
   if (libTier !== "전체") books = books.filter((b) => TIER_KO[b.tier] === libTier);
   if (q) books = books.filter((b) => b.title.includes(q) || b.author.includes(q));
+  return books;
+}
+
+// 목록 갱신 경계는 #lib-list 하나다. 검색 입력·칩·요약줄은 컨테이너 밖이라 타이핑 중 파괴되지 않는다(원장 1).
+// 권수는 목록과 같은 계산에서 나오므로 요약줄도 여기서 함께 맞춘다.
+function renderLibList() {
+  const books = libraryBooks();
   const total = books.length;
   const visibleBooks = books.slice(0, libVisibleCount);
+  document.getElementById("lib-list").innerHTML = `
+    ${total ? visibleBooks.map((b) => bookCard(b)).join("") : `<p class="empty">조건에 맞는 책이 없습니다.</p>`}
+    ${visibleBooks.length < total
+      ? `<button class="btn btn-light load-more" data-load-more="1">더 보기 · ${visibleBooks.length}/${total}권</button>`
+      : ""}`;
+  viewEl.querySelector(".library-summary").textContent =
+    `${libDomain === "전체" ? "전체 서재" : libDomain} · ${total}권`;
+}
 
+function renderLibrary() {
   viewEl.innerHTML = `
     ${IS_SEED ? `<div class="notice">시드 데이터 ${ALL.length}권 — 정식 천 권 리스트 교체 예정</div>` : ""}
-    <p class="library-summary">${libDomain === "전체" ? "전체 서재" : esc(libDomain)} · ${total}권</p>
+    <p class="library-summary"></p>
     <input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색">
     <div class="chips" role="group" aria-label="분야 필터">
       ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
@@ -849,10 +922,8 @@ function renderLibrary() {
     <div class="chips" role="group" aria-label="계단 필터">
       ${["전체", "뿌리", "줄기", "가지"].map((t) => `<button class="chip" data-libtier="${esc(t)}" aria-pressed="${t === libTier}">${esc(t)}</button>`).join("")}
     </div>
-    ${total ? visibleBooks.map((b) => bookCard(b)).join("") : `<p class="empty">조건에 맞는 책이 없습니다.</p>`}
-    ${visibleBooks.length < total
-      ? `<button class="btn btn-light load-more" data-load-more="1">더 보기 · ${visibleBooks.length}/${total}권</button>`
-      : ""}`;
+    <div id="lib-list"></div>`;
+  renderLibList();
   const input = document.getElementById("lib-search");
   libComposing = false;                      // 새 입력 노드 — 조합 잠금 초기화
   input.addEventListener("compositionstart", () => { libComposing = true; });
@@ -866,16 +937,12 @@ function renderLibrary() {
   });
 }
 
-// 서재 목록은 입력 노드를 포함한 화면 전체를 다시 그리므로 한글 조합 중에 렌더하면 조합이 파괴된다(원장 1).
+// 목록만 다시 그리므로 입력 노드와 선택 위치는 그대로 남는다 — 조합 잠금은 조합 중 렌더 보류용이다(원장 1).
 function applyLibQuery(input) {
   if (!input.isConnected) return;            // 이미 렌더로 교체된 노드의 뒤늦은 이벤트
   libQuery = input.value;
   libVisibleCount = LIB_PAGE_SIZE;
-  const pos = input.selectionStart;
-  renderLibrary();
-  const again = document.getElementById("lib-search");
-  again.focus();
-  again.setSelectionRange(pos, pos);
+  renderLibList();
 }
 
 /* ── 탭: 기록 ─────────────────────────────────────── */
@@ -1435,7 +1502,7 @@ document.addEventListener("click", (e) => {
     render();
   } else if (t.dataset.loadMore) {
     libVisibleCount += LIB_PAGE_SIZE;
-    render();
+    renderLibList();                               // 목록만 이어 그린다 — 검색 입력·칩은 그대로 둔다
   } else if (t.dataset.cycleRead) {
     if (!cycleRead(t.dataset.cycleRead)) return;   // 저장 실패 시 읽음 배지를 켜지 않는다(DI-4)
     render();

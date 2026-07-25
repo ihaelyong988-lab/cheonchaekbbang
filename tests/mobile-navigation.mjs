@@ -243,7 +243,7 @@ try {
   await page.locator('[data-open-domain-list="문학"]').click();
   assert.equal(await page.locator(".tab[aria-current=page] span").textContent(), "서재");
   assert.equal(await page.locator(".library-summary").textContent(), "문학 · 64권");
-  assert.equal(await page.locator(".view > .card").count(), 64);
+  assert.equal(await page.locator("#lib-list > .card").count(), 64);
   await back();
   assert.equal(await page.locator(".tab[aria-current=page] span").textContent(), "홈");
 
@@ -364,7 +364,7 @@ try {
      시트는 모달(§2-15 배경 inert)이므로 열린 동안 브랜드는 비활성이어야 하고,
      시트를 닫은 뒤 브랜드가 첫 화면으로 되돌리는지 확인한다. */
   await page.locator('.tab[data-tab="library"]').click();
-  await page.locator(".view > .card").first().click();
+  await page.locator("#lib-list > .card").first().click();
   await page.waitForTimeout(120);
   assert.equal(await page.locator("#overlay-root .sheet").count(), 1, "책 시트가 열리지 않았습니다.");
   assert.equal(await page.evaluate(() => document.querySelector(".topbar").inert), true, "시트가 열린 동안 상단바가 비활성(inert)이 아닙니다.");
@@ -492,9 +492,20 @@ try {
   });
   await ime.probePage.locator('.tab[data-tab="library"]').click();
   await ime.probePage.locator("#lib-search").click();
+  await ime.probePage.evaluate(() => { window.__libInput = document.getElementById("lib-search"); });
   await composeKorean(imeSession, ime.probePage, ["ㄴ", "노", "노인"], "노인");
   assert.equal(await ime.probePage.locator("#lib-search").inputValue(), "노인", "서재 검색 입력값이 IME 조합 결과와 다릅니다.");
-  assert.ok(await ime.probePage.locator(".view > .card").count() >= 1, "IME 조합으로 입력한 제목의 결과 카드가 0장입니다.");
+  // 갱신 경계가 #lib-list 하나이므로 입력 노드는 타이핑 전후 같은 노드로 남는다.
+  // 화면 전체 재렌더로 되돌아가면 노드가 교체되어 여기서 잡힌다(원장 1 2단계).
+  assert.equal(
+    await ime.probePage.evaluate(() => {
+      const input = document.getElementById("lib-search");
+      return Boolean(window.__libInput) && window.__libInput === input && input.isConnected;
+    }),
+    true,
+    "서재 검색 입력 노드가 조합 뒤 새 노드로 교체됐습니다 — 목록 갱신이 화면 전체를 다시 그립니다(원장 1)."
+  );
+  assert.ok(await ime.probePage.locator("#lib-list > .card").count() >= 1, "IME 조합으로 입력한 제목의 결과 카드가 0장입니다.");
   assert.equal(await ime.probePage.locator(".library-summary").isVisible(), true, "서재 요약줄이 사라졌습니다.");
   assert.deepEqual(await countComposition(ime.probePage), { start: 1, end: 1 }, "서재 검색의 조합 이벤트가 1회·1회가 아닙니다.");
 
@@ -715,6 +726,31 @@ try {
     })),
     "여정 완료 이중 실행에서 기록 1건·팝업 비표시·탭 유지·다른 여정 미시작이 깨졌습니다(N-7 · N-8)."
   );
+
+  /* 관통 차단은 닫힘을 일으킨 좌표만 무효로 한다 — 다른 자리 탭은 닫힘 직후에도 먹혀야 한다(N-7).
+     화면 전체를 시간 창으로 잠그면 이 세 번째 탭이 사라져 정상 조작이 죽는다. */
+  async function tapCenter(target, locator) {
+    const box = await locator.boundingBox();
+    await target.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  }
+  await closeAllOverlays(journey.probePage);
+  await journey.probePage.locator('.tab[data-tab="library"]').click();
+  await journey.probePage.waitForTimeout(200);
+  const libCards = journey.probePage.locator("#lib-list > .card");
+  await tapCenter(journey.probePage, libCards.nth(0));
+  await journey.probePage.waitForTimeout(200);
+  assert.equal(await journey.probePage.locator("#overlay-root .sheet").count(), 1, "서재 카드 탭으로 책 시트가 열리지 않았습니다.");
+  await tapCenter(journey.probePage, journey.probePage.locator(".sheet-close"));
+  await journey.probePage.waitForTimeout(60);
+  assert.equal(await journey.probePage.locator("#overlay-root .sheet").count(), 0, "닫기 버튼 탭으로 시트가 닫히지 않았습니다.");
+  await tapCenter(journey.probePage, libCards.nth(1));
+  await journey.probePage.waitForTimeout(240);
+  assert.equal(
+    await journey.probePage.locator("#overlay-root .sheet").count(),
+    1,
+    "닫힘 직후 다른 자리 탭이 무시됐습니다 — 관통 차단이 복원 화면 전체를 잠갔습니다(N-7)."
+  );
+  await closeAllOverlays(journey.probePage);
   assert.deepEqual(journey.probeErrors, [], "여정 이중 실행 게이트에서 런타임 오류가 발생했습니다.");
   await journey.probeContext.close();
 
@@ -728,6 +764,7 @@ try {
     heroFontBuckets: questionLineProbe.buckets,
     imeCompositionGate: true,
     journeyDoubleTapGate: journeyMatrix.map((row) => row.mode),
+    tapThroughReleaseGate: true,
     historyPayloadGate: { urlChanges, tabChanges },
     serviceWorkerUpdateGate: true,
     responsive,

@@ -73,15 +73,15 @@ try {
 
   // 서재 1,000권 확장 대비: 80권 단위 지연 렌더링.
   await page.locator('.tab[data-tab="library"]').click();
-  assert.equal(await page.locator(".view > .card").count(), 80);
+  assert.equal(await page.locator("#lib-list > .card").count(), 80);
   assert.equal(await page.locator(".load-more").textContent(), "더 보기 · 80/175권");
   await page.locator(".load-more").click();
-  assert.equal(await page.locator(".view > .card").count(), 160);
+  assert.equal(await page.locator("#lib-list > .card").count(), 160);
   await page.locator(".load-more").click();
-  assert.equal(await page.locator(".view > .card").count(), 175);
+  assert.equal(await page.locator("#lib-list > .card").count(), 175);
 
   // 일반 시트의 모달 의미, 배경 inert, 포커스 트랩, Escape, 호출 위치 복귀.
-  const firstCard = page.locator(".view > .card").first();
+  const firstCard = page.locator("#lib-list > .card").first();
   const firstBookId = await firstCard.getAttribute("data-open-book");
   await firstCard.focus();
   await firstCard.click();
@@ -99,7 +99,7 @@ try {
 
   // 뿌리 도달은 실제 따라가기 동작당 한 번만 증가하며 중첩 렌더에서 중복되지 않는다.
   await page.locator('[data-libtier="가지"]').click();
-  await page.locator(".view > .card").first().click();
+  await page.locator("#lib-list > .card").first().click();
   const branchId = await page.locator("[data-open-trail]").getAttribute("data-open-trail");
   await page.locator("[data-open-trail]").click();
   assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).rootArrivals), 1);
