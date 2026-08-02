@@ -352,7 +352,7 @@ body {
 .progress-book .tier { flex: 0 0 auto; margin-bottom: 0; }
 .progress-book .t { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--ink); word-break: keep-all; }
 .progress-book .a { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); }
-.progress-book .badge-read, .progress-book .badge-reading { flex: 0 0 auto; }
+.progress-note { font-size: 12.5px; font-weight: 700; color: var(--muted); padding: 6px 2px 2px; }
 
 /* 하단 탭 */
 .tabbar {

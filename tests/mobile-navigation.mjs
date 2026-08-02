@@ -837,6 +837,56 @@ try {
   await shellPage.waitForTimeout(220);
   assert.equal(await shellPage.locator(".progress-book").count(), 0, "하단 탭으로 다시 연 기록 화면이 첫 페이지가 아닙니다.");
   assert.equal(await shellPage.evaluate(() => window.scrollY), 0);
+
+  /* (f) 기록이 있는 실사용 상태 — 한 화면에 같은 책이 두 번 나오지 않는다(R6 · §9 E-016).
+         기록 0건 상태에서만 돌리면 중복은 발현하지 않는다. 반드시 읽음·읽는 중을 심고 판정한다. */
+  const seeded = await shellPage.evaluate(async () => {
+    const { BOOKS } = await import("./data/books.js");
+    const philosophy = BOOKS.filter((book) => book.domain === "철학").slice(0, 5).map((book) => book.id);
+    const stored = JSON.parse(localStorage.getItem("cheonchaek.v1") || "{}");
+    stored.read = philosophy.slice(0, 3);
+    stored.reading = philosophy.slice(3, 5);
+    localStorage.setItem("cheonchaek.v1", JSON.stringify(stored));
+    return { read: 3, reading: 2 };
+  });
+  await shellPage.reload({ waitUntil: "networkidle" });
+  await shellPage.locator('.tab[data-tab="record"]').click();
+  await shellPage.waitForTimeout(220);
+  const philTab = shellPage.locator("[data-progress-domain]").nth(0);
+  const philCount = await philTab.locator("b").textContent();
+  assert.equal(Number(philCount.match(/^\s*(\d+)\s*\//u)[1]), seeded.read, "심어 둔 읽음 수가 진행률에 반영되지 않았습니다.");
+  await philTab.click();
+  await shellPage.waitForTimeout(180);
+  assert.equal(
+    await shellPage.locator(`#${await philTab.getAttribute("aria-controls")} .progress-book`).count(),
+    Number(philCount.match(/\/\s*(\d+)권/u)[1]) - seeded.read - seeded.reading,
+    "펼친 목록이 아직 읽지 않은 책만 담고 있지 않습니다."
+  );
+  assert.deepEqual(await shellPage.evaluate(() => {
+    const counts = new Map();
+    for (const node of document.querySelectorAll("#view [data-open-book]")) {
+      const id = node.dataset.openBook;
+      counts.set(id, (counts.get(id) || 0) + 1);
+    }
+    return [...counts].filter(([, times]) => times > 1).map(([id, times]) => `${id}×${times}`);
+  }), [], "기록 화면 한 화면에 같은 책이 두 번 렌더됐습니다(R6 1정보 1표시).");
+
+  /* 개폐는 진행률 패널만 갱신한다 — 기록 화면 전체 재렌더는 §7 승격선을 넘고 포커스를 날린다 */
+  const toggleCost = await shellPage.evaluate(() => {
+    const row = document.querySelector("[data-progress-domain]");
+    const card = document.querySelector("#view .card-title");   // 전면 재렌더면 이 노드가 교체된다
+    const start = performance.now();
+    row.click();
+    return {
+      sync: performance.now() - start,
+      rowKept: row.isConnected,
+      cardKept: card.isConnected,
+    };
+  });
+  assert.equal(toggleCost.cardKept, true, "분야 탭 개폐가 기록 화면의 책 카드까지 다시 그렸습니다.");
+  assert.equal(toggleCost.rowKept, true, "분야 탭 개폐가 눌린 버튼 자신을 교체했습니다 — 포커스가 날아갑니다(§8-1).");
+  assert.ok(toggleCost.sync < 100, `분야 탭 개폐 동기 렌더가 ${toggleCost.sync.toFixed(1)}ms 로 §7 승격선을 넘었습니다.`);
+
   assert.deepEqual(shell.probeErrors, [], "계보 진행률·첫 페이지 복귀 게이트에서 런타임 오류가 발생했습니다.");
   await shell.probeContext.close();
 

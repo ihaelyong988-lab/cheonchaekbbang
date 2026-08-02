@@ -54,7 +54,12 @@ for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), 
 for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
-assert.match(sw, /ccb-v1\.10\.0/u, "서비스워커 캐시 버전이 v1.10.0이어야 합니다.");
+/* §0-3 3항 — 캐시 버전을 하드코딩한 지점 전수 일치. 지점을 열거하면 원본이 늘 때 조용히 낡는다(§9 E-015).
+   정규식 이스케이프(`ccb-v1\.10\.0`)도 같은 값으로 세도록 역슬래시를 걷어내고 센다. */
+const cacheVersionSources = `${sw}\n${await read("tests/production-smoke.mjs")}\n${await read("tests/static-rules.mjs")}`;
+const cacheVersions = [...new Set([...cacheVersionSources.replace(/\\/gu, "").matchAll(/ccb-v\d+\.\d+\.\d+/gu)].map((hit) => hit[0]))];
+assert.equal(cacheVersions.length, 1, `캐시 버전이 여러 값으로 갈렸습니다: ${cacheVersions.join(" · ")}`);
+assert.match(sw, /const CACHE = "ccb-v\d+\.\d+\.\d+"/u, "서비스워커 캐시 버전 상수 누락");
 assert.match(app, /register\("sw\.js", \{ updateViaCache: "none" \}\)/u, "SW 갱신 확인은 HTTP 캐시를 우회해야 합니다.");
 
 /* G-14 배포 갱신 통지 — 열린 탭의 히스토리를 건드리지 않고 통지만 한다 (§10-2 원장 12) */
@@ -109,6 +114,13 @@ assert.match(app, /class="progress-panel" id="\$\{panelId\}"/u, "계보 진행�
 assert.match(app, /function progressBookRow\(b\)\s*\{/u, "계보 진행률 목록 행 헬퍼 누락");
 assert.match(app, /openProgressDomain = openProgressDomain === domain \? null : domain/u,
   "계보 진행률은 한 번에 한 분야만 펼쳐야 합니다.");
+/* R6 — 펼친 목록은 아직 손대지 않은 책만 담는다. 읽음·읽는 중은 아래 개인 기록 섹션이 원천이다 */
+assert.match(app, /function progressPanelHtml\(domain\)[\s\S]{0,200}readStatus\(b\.id\) === "none"/u,
+  "펼친 목록이 읽음·읽는 중 책을 걸러내지 않습니다 — 한 화면에 같은 책이 두 번 나옵니다(R6).");
+/* 개폐는 패널만 갱신한다 — 전면 재렌더는 §7 승격선을 넘고 포커스를 날린다 */
+assert.match(app, /function renderProgressPanels\(\)\s*\{/u, "진행률 패널 부분 갱신 함수 누락");
+assert.match(app, /openProgressDomain === domain \? null : domain;\s*\n\s*renderProgressPanels\(\)/u,
+  "분야 탭 개폐가 부분 갱신이 아니라 전면 재렌더를 호출합니다.");
 assert.match(css, /\.progress-row\s*\{[^}]*min-height:\s*44px/u, "계보 진행률 탭 44px 세로 게이트 누락");
 assert.match(css, /\.progress-book\s*\{[^}]*min-height:\s*44px/u, "계보 진행률 목록 행 44px 세로 게이트 누락");
 
