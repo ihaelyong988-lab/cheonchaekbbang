@@ -462,11 +462,14 @@ function readEntry(raw) {
 }
 
 function pushView(view) {
+  const previous = currentView;
   if (view.overlay && !top().overlay) overlayReturnFocus = rememberFocus(document.activeElement);
   currentView = view;
   pointer += 1;
   history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
   render();
+  // 탭이 바뀌는 이동은 그 화면의 최상단에서 시작한다. 오버레이 push 에는 적용하지 않는다(N-9).
+  if (!view.overlay && view.tab !== previous.tab) scrollPageTop();
 }
 function top() { return currentView; }
 
@@ -740,6 +743,7 @@ let libQuery = "", libDomain = state.prefs.libDomain, libTier = state.prefs.libT
 let libComposing = false;   // 한글 IME 조합 중 재렌더 잠금
 const LIB_PAGE_SIZE = 80;
 let libVisibleCount = LIB_PAGE_SIZE;
+let openProgressDomain = null;   // 기록 탭 계보 진행률에서 펼쳐 둔 분야 1개(세션 한정 — 복원 대상 아님, C5-2)
 let questionQuery = "", questionResults = [];
 const findBooksForQuestion = createQuestionSearch(ALL);
 
@@ -946,14 +950,66 @@ function applyLibQuery(input) {
 }
 
 /* ── 탭: 기록 ─────────────────────────────────────── */
+function domainBooks(domain) {
+  return ALL.filter((b) => b.domain === domain).sort((a, z) => TIER_ORDER[a.tier] - TIER_ORDER[z.tier]);
+}
+
+// 계보 진행률 탭을 펼쳤을 때 보이는 책 한 줄. 카드가 아니라 목록 행으로 둔다.
+function progressBookRow(b) {
+  return `
+    <button class="progress-book" data-open-book="${b.id}">
+      ${tierBadge(b)}
+      <span class="t">${esc(b.title)}<span class="a">${esc(b.author)}</span></span>
+    </button>`;
+}
+
+/* 진행률은 읽음 기준이므로 펼친 목록은 아직 손대지 않은 책만 담는다. 읽음·읽는 중 책은
+   같은 화면 아래 개인 기록 섹션이 원천이고, 여기서 다시 그리면 한 화면에 같은 책이 두 번
+   나온다(R6 1정보 1표시). 전권 읽음 + 문학 펼침 조건에서 64권 전량이 중복됐다(§9 E-016). */
+function progressPanelHtml(domain) {
+  const remaining = domainBooks(domain).filter((b) => readStatus(b.id) === "none");
+  if (!remaining.length) return `<p class="progress-note">남은 책이 없습니다. 아래 읽은 책에서 이어 봅니다.</p>`;
+  return `<p class="progress-note">아직 읽지 않은 책</p>${remaining.map((b) => progressBookRow(b)).join("")}`;
+}
+
+function progressRowsHtml() {
+  // 분야마다 탭 1개 — 누르면 그 분야 목록이 바로 아래 펼쳐진다. 한 번에 한 분야만 열린다.
+  return DOMAINS.map((d, index) => {
+    const books = domainBooks(d);
+    const done = books.filter((b) => state.read.includes(b.id)).length;
+    const open = openProgressDomain === d;
+    const panelId = `progress-panel-${index}`;
+    return `
+      <button class="progress-row" data-progress-domain="${esc(d)}"
+        aria-expanded="${open}" aria-controls="${panelId}">
+        <span class="name">${esc(d)}</span>
+        <b>${done} / ${books.length}권</b>
+      </button>
+      <div class="progress-panel" id="${panelId}" role="group"
+        aria-label="${esc(d)} 아직 읽지 않은 책"${open ? "" : " hidden"}>
+        ${open ? progressPanelHtml(d) : ""}
+      </div>`;
+  }).join("");
+}
+
+/* 개폐는 진행률 패널만 갱신한다. 기록 화면을 통째로 다시 그리면 문답집·책 카드 수백 장이
+   함께 그려져 동기 렌더가 §7 승격선을 넘고, 눌린 버튼까지 사라져 포커스가 날아간다.
+   갱신 경계를 좁히는 방식은 renderLibList 가 이미 확립한 패턴이다(§9 E-017). */
+function renderProgressPanels() {
+  for (const row of viewEl.querySelectorAll("[data-progress-domain]")) {
+    const domain = row.dataset.progressDomain;
+    const open = openProgressDomain === domain;
+    row.setAttribute("aria-expanded", String(open));
+    const panel = document.getElementById(row.getAttribute("aria-controls"));
+    panel.hidden = !open;
+    panel.innerHTML = open ? progressPanelHtml(domain) : "";
+  }
+}
+
 function renderRecord() {
   const reading = state.reading.map((id) => BY_ID.get(id)).filter(Boolean);
   const read = state.read.map((id) => BY_ID.get(id)).filter(Boolean);
-  const domainRows = DOMAINS.map((d) => {
-    const books = ALL.filter((b) => b.domain === d);
-    const done = books.filter((b) => state.read.includes(b.id)).length;
-    return `<div class="progress-row"><span>${esc(d)}</span><b>${done} / ${books.length}권</b></div>`;
-  }).join("");
+  const domainRows = progressRowsHtml();
 
   const qa = state.questions.map((x) => {
     const b = BY_ID.get(x.bookId);
@@ -1363,8 +1419,14 @@ function scrollPageTop() {
   requestAnimationFrame(() => window.scrollTo(0, 0));
 }
 
+// 하단 탭으로 화면을 열면 그 화면의 첫 페이지에서 시작한다 — 이어 보던 목록 페이지와 펼쳐 둔 항목을 되돌린다.
+function resetTabToFirstPage(tab) {
+  if (tab === "library") libVisibleCount = LIB_PAGE_SIZE;
+  if (tab === "record") openProgressDomain = null;
+}
+
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
   if (t.dataset.home) {
@@ -1423,8 +1485,13 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.tab) {
     if (t.dataset.tab === "question") { goHome(); return; }   // 홈 탭 = 첫 화면 복귀로 통일
     const cur = top();
-    if (cur.tab === t.dataset.tab && !cur.overlay) return;
-    pushView({ tab: t.dataset.tab, overlay: null });
+    resetTabToFirstPage(t.dataset.tab);
+    // 탭이 바뀌는 이동은 pushView 가 최상단으로 내린다(N-9).
+    if (cur.tab !== t.dataset.tab) { pushView({ tab: t.dataset.tab, overlay: null }); return; }
+    // 이미 보고 있는 탭을 다시 눌러도 그 화면의 첫 페이지 최상단으로 되돌아온다.
+    if (cur.overlay) pushView({ tab: cur.tab, overlay: null });
+    else render();
+    scrollPageTop();
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
@@ -1481,8 +1548,12 @@ document.addEventListener("click", (e) => {
     libDomain = domain;
     libTier = "전체";
     libVisibleCount = LIB_PAGE_SIZE;
-    pushView({ tab: "library", overlay: null });
-    scrollPageTop();
+    pushView({ tab: "library", overlay: null });   // 최상단 이동은 pushView 의 N-9 경로가 맡는다
+  } else if (t.dataset.progressDomain) {
+    // 계보 진행률 분야 탭 — 같은 분야를 다시 누르면 접고, 다른 분야를 누르면 그쪽만 펼친다.
+    const domain = t.dataset.progressDomain;
+    openProgressDomain = openProgressDomain === domain ? null : domain;
+    renderProgressPanels();   // 눌린 버튼이 그대로 남으므로 포커스도 그대로다
   } else if (t.dataset.domain) {
     const domain = t.dataset.domain;
     if (!commit(() => { state.prefs.lineageDomain = domain; })) return;
