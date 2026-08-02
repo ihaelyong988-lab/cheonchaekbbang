@@ -1,6 +1,6 @@
 // 천책빵 — 뿌리를 찾는 서재 (PRD-천책빵.md v1.7)
 import { BOOKS, JOURNEYS, DOMAINS, IS_SEED } from "./data/books.js";
-import { createQuestionSearch } from "./lib/search.js";
+import { createQuestionSearch, compactSearchText, TOPIC_CHIPS } from "./lib/search.js";
 
 /* ── 데이터 무결성 검증 (PRD §5) ───────────────────── */
 function validateBooks(books) {
@@ -744,7 +744,7 @@ let libComposing = false;   // 한글 IME 조합 중 재렌더 잠금
 const LIB_PAGE_SIZE = 80;
 let libVisibleCount = LIB_PAGE_SIZE;
 let openProgressDomain = null;   // 기록 탭 계보 진행률에서 펼쳐 둔 분야 1개(세션 한정 — 복원 대상 아님, C5-2)
-let questionQuery = "", questionResults = [];
+let questionQuery = "", questionResults = [], questionNotice = "";
 const findBooksForQuestion = createQuestionSearch(ALL);
 
 function questionSearchHtml() {
@@ -759,16 +759,21 @@ function questionSearchHtml() {
           </button>`).join("")}
       </div>`
     : questionQuery
-      ? `<p class="empty">연결된 책을 찾지 못했습니다. 핵심 낱말을 바꿔 질문해 보세요.</p>`
+      // 빈 결과를 막다른 길로 두지 않는다 — 이 서재가 실제로 답할 수 있는 낱말을 눌러 갈 수 있게 준다(원장 18).
+      ? `<p class="empty">${esc(questionQuery)} 로는 연결된 책을 찾지 못했습니다. 아래 낱말로 다시 물어볼 수 있습니다.</p>
+         <div class="chips" role="group" aria-label="다시 물어볼 낱말">
+           ${TOPIC_CHIPS.map((term) => `<button class="chip" data-ask-term="${esc(term)}">${esc(term)}</button>`).join("")}
+         </div>`
       : "";
-  const status = questionQuery
+  const status = questionNotice || (questionQuery
     ? `${questionResults.length}권을 찾았습니다.`
-    : "질문을 입력하면 책을 찾습니다.";
+    : "질문을 입력하면 책을 찾습니다.");
   return `
     <p class="section-label">질문 하기</p>
+    ${questionNotice ? `<p class="empty">${esc(questionNotice)}</p>` : ""}
     <form id="question-search-form" class="question-search">
       <label class="sr-only" for="question-search">책으로 이어질 질문</label>
-      <input id="question-search" class="search" type="search" minlength="2"
+      <input id="question-search" class="search" type="search" minlength="1"
         placeholder="예: 어떻게 살아야 하는가" value="${esc(questionQuery)}" required>
       <button class="btn btn-primary" type="submit">책 찾기</button>
     </form>
@@ -896,7 +901,12 @@ function libraryBooks() {
     TIER_ORDER[a.tier] - TIER_ORDER[z.tier] || DOMAINS.indexOf(a.domain) - DOMAINS.indexOf(z.domain));
   if (libDomain !== "전체") books = books.filter((b) => b.domain === libDomain);
   if (libTier !== "전체") books = books.filter((b) => TIER_KO[b.tier] === libTier);
-  if (q) books = books.filter((b) => b.title.includes(q) || b.author.includes(q));
+  // 홈 질문 검색과 같은 정규화를 쓴다 — 띄어쓰기·구두점 차이로 결과가 사라지지 않는다(원장 16).
+  const compact = compactSearchText(q);
+  if (compact) {
+    books = books.filter((b) => compactSearchText(b.title).includes(compact)
+      || compactSearchText(b.author).includes(compact));
+  }
   return books;
 }
 
@@ -1426,7 +1436,7 @@ function resetTabToFirstPage(tab) {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
   if (t.dataset.home) {
@@ -1549,6 +1559,10 @@ document.addEventListener("click", (e) => {
     libTier = "전체";
     libVisibleCount = LIB_PAGE_SIZE;
     pushView({ tab: "library", overlay: null });   // 최상단 이동은 pushView 의 N-9 경로가 맡는다
+  } else if (t.dataset.askTerm) {
+    // 빈 결과 화면의 낱말 칩 — 이 서재가 답할 수 있는 질의로 곧장 갈아탄다(원장 18)
+    runQuestionSearch(t.dataset.askTerm);
+    requestAnimationFrame(() => document.querySelector(".question-results, .empty")?.scrollIntoView({ block: "start" }));
   } else if (t.dataset.progressDomain) {
     // 계보 진행률 분야 탭 — 같은 분야를 다시 누르면 접고, 다른 분야를 누르면 그쪽만 펼친다.
     const domain = t.dataset.progressDomain;
@@ -1585,13 +1599,23 @@ document.addEventListener("click", (e) => {
   }
 });
 
+function runQuestionSearch(value) {
+  const query = String(value).trim();
+  // 공백만 넣고 제출하면 required 를 통과하면서 화면은 아무 반응이 없었다(원장 17).
+  questionNotice = query ? "" : "찾을 낱말을 한 글자 이상 적어 주세요.";
+  questionQuery = query;
+  questionResults = query ? findBooksForQuestion(query) : [];
+  renderQuestion();
+  announce(questionNotice || `${questionResults.length}권을 찾았습니다.`);
+  if (!query) { document.getElementById("question-search")?.focus(); return false; }
+  return true;
+}
+
 document.addEventListener("submit", (e) => {
   if (e.target.id !== "question-search-form") return;
   e.preventDefault();
   const input = document.getElementById("question-search");
-  questionQuery = input.value.trim();
-  questionResults = findBooksForQuestion(questionQuery);
-  renderQuestion();
+  if (!runQuestionSearch(input.value)) return;
   requestAnimationFrame(() => {
     const result = document.querySelector(".question-results, .empty");
     if (result) result.scrollIntoView({ block: "start" });

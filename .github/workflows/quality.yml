@@ -24,3 +24,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test
+
+  # 배포된 사이트를 때리는 검사라 로컬·PR 체인에는 넣지 않는다(로컬이 배포보다 앞서면 항상 빨강).
+  # main 반영 후 Pages 재배포를 기다렸다가 한 번만 돌린다.
+  production:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Pages 재배포 대기
+        run: sleep 180
+      - run: pnpm run test:production

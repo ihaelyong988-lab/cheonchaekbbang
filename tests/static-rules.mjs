@@ -55,7 +55,7 @@ for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
 /* §0-3 3항 — 캐시 버전을 하드코딩한 지점 전수 일치. 지점을 열거하면 원본이 늘 때 조용히 낡는다(§9 E-015).
-   정규식 이스케이프(`ccb-v1\.10\.0`)도 같은 값으로 세도록 역슬래시를 걷어내고 센다. */
+   정규식 이스케이프로 적힌 값도 같은 값으로 세도록 역슬래시를 걷어내고 센다. */
 const cacheVersionSources = `${sw}\n${await read("tests/production-smoke.mjs")}\n${await read("tests/static-rules.mjs")}`;
 const cacheVersions = [...new Set([...cacheVersionSources.replace(/\\/gu, "").matchAll(/ccb-v\d+\.\d+\.\d+/gu)].map((hit) => hit[0]))];
 assert.equal(cacheVersions.length, 1, `캐시 버전이 여러 값으로 갈렸습니다: ${cacheVersions.join(" · ")}`);
@@ -133,4 +133,33 @@ assert.match(app, /if \(cur\.overlay\) pushView\(\{ tab: cur\.tab, overlay: null
   "이미 보고 있는 탭을 다시 눌러도 최상단으로 되돌아와야 합니다.");
 assert.equal((app.match(/function scrollPageTop\(/gu) || []).length, 1, "최상단 복귀는 단일 헬퍼여야 합니다.");
 
-console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true }, null, 2));
+/* W1 (2026-08-02) — 검색: 두 화면이 같은 정규화를 쓰고, 빈 결과가 막다른 길이 아니다 */
+assert.match(app, /import \{ createQuestionSearch, compactSearchText, TOPIC_CHIPS \} from "\.\/lib\/search\.js"/u,
+  "서재 검색이 홈과 같은 정규화 함수를 가져오지 않았습니다(원장 16).");
+assert.match(app, /compactSearchText\(b\.title\)\.includes\(compact\)/u,
+  "서재 검색이 여전히 원문 부분문자열로 거릅니다(원장 16).");
+assert.doesNotMatch(app, /b\.title\.includes\(q\) \|\| b\.author\.includes\(q\)/u, "서재 검색의 구 정규화 경로가 남아 있습니다.");
+assert.match(app, /id="question-search"[\s\S]{0,80}minlength="1"/u, "한 글자 주제어 검색이 UI 에서 막혀 있습니다(원장 17).");
+assert.match(app, /function runQuestionSearch\(value\)\s*\{/u, "질문 검색 단일 진입점 누락");
+assert.equal((app.match(/findBooksForQuestion\(/gu) || []).length, 1,
+  "질문 검색 실행부는 runQuestionSearch 1곳이어야 합니다(경로가 갈리면 진입 방식마다 결과가 달라집니다).");
+assert.match(app, /data-ask-term="\$\{esc\(term\)\}"/u, "빈 결과에서 되짚을 낱말 칩이 없습니다(원장 18).");
+assert.match(app, /찾을 낱말을 한 글자 이상 적어 주세요/u, "공백 제출 안내 문구 누락(원장 17).");
+assert.match(search, /export const TOPIC_TERMS/u, "등록 주제어 목록이 노출되지 않습니다.");
+assert.match(search, /TOPIC_GROUPS\.map\(\(group\) => group\.terms\[0\]\)/u,
+  "빈 결과 낱말 칩이 그룹마다 하나씩이 아닙니다 — 앞에서 자르면 한 분야 낱말만 나옵니다.");
+assert.match(search, /export function compactSearchText/u, "compactSearchText 미노출");
+const josaList = search.match(/const JOSA = \/\(([^)]*)\)/u)?.[1].split("|") || [];
+for (const josa of ["이나", "라도", "마다", "조차", "에", "도", "만"]) {
+  assert.ok(josaList.includes(josa), `조사 "${josa}" 가 JOSA 목록에 없습니다(원장 18).`);
+}
+assert.ok(josaList.indexOf("이나") < josaList.indexOf("이"),
+  "긴 조사가 짧은 조사보다 뒤에 있으면 '이나'가 '이'로 먼저 잘립니다.");
+
+/* W0 — 테스트 체인이 패키지 매니저에 묶이지 않는다 (원장 62) */
+const pkg = JSON.parse(await read("package.json"));
+assert.doesNotMatch(pkg.scripts.test, /npm run|pnpm run|yarn/u,
+  "테스트 체인이 특정 패키지 매니저 호출에 묶여 있습니다 — 락파일은 pnpm, 내부 호출은 npm 이었습니다(원장 62).");
+assert.ok(pkg.scripts["test:production"], "배포 검사 스크립트가 사라졌습니다.");
+
+console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true }, null, 2));

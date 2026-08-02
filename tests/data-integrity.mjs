@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { BOOKS, DOMAIN_TARGETS, DOMAINS, JOURNEYS } from "../data/books.js";
 import {
   CELEB_BOOKS,
@@ -19,6 +20,20 @@ assert.equal(
   BOOKS.length,
   "정규화 제목이 중복됩니다."
 );
+
+/* 배포 검사(`test:production`)는 `npm test` 체인 밖이라 로컬에서 한 번도 돌지 않는다.
+   그 안에 박힌 카탈로그 수치가 데이터와 어긋나면 배포 직후에야 빨강이 된다 — §9 E-015 와 같은
+   실패 모드다. 지점을 열거하는 대신 실제 데이터와 대조해 드리프트를 여기서 잡는다. */
+{
+  const smoke = await readFile(new URL("./production-smoke.mjs", import.meta.url), "utf8");
+  const declared = smoke.match(/\[(\d+),\s*(\d+)\]/u);
+  assert.ok(declared, "production-smoke 의 카탈로그 수치 선언을 찾지 못했습니다.");
+  assert.deepEqual(
+    [Number(declared[1]), Number(declared[2])],
+    [BOOKS.length, BOOKS.reduce((sum, book) => sum + book.questions.length, 0)],
+    "production-smoke 의 도서·질문 수가 실제 데이터와 어긋납니다(배포 후에야 빨강이 됩니다)."
+  );
+}
 
 const byId = new Map(BOOKS.map((book) => [book.id, book]));
 for (const book of BOOKS) {
