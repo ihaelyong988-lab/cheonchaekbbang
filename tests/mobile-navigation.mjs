@@ -754,9 +754,97 @@ try {
   assert.deepEqual(journey.probeErrors, [], "여정 이중 실행 게이트에서 런타임 오류가 발생했습니다.");
   await journey.probeContext.close();
 
+  /* [G-15] 기록 탭 계보 진행률 = 분야 탭 + 목록 펼침 · 하단 탭 = 그 화면의 첫 페이지 최상단 (§6-6 N-9 · §11-4) */
+  const shell = await openProbe();
+  const shellPage = shell.probePage;
+
+  /* (a) 탭이 바뀌는 이동은 최상단에서 시작한다 */
+  await shellPage.locator('.tab[data-tab="library"]').click();
+  await shellPage.waitForTimeout(220);
+  await shellPage.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  assert.ok(await shellPage.evaluate(() => window.scrollY > 0), "서재를 아래로 내리지 못해 스크롤 게이트를 판정할 수 없습니다.");
+  await shellPage.locator('.tab[data-tab="lineage"]').click();
+  await shellPage.waitForTimeout(220);
+  assert.equal(await shellPage.evaluate(() => window.scrollY), 0, "탭을 바꿨는데 이전 화면의 스크롤 위치가 남았습니다(N-9).");
+
+  /* (b) 이미 보고 있는 탭을 다시 눌러도 그 화면 최상단으로 되돌아온다 */
+  await shellPage.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  assert.ok(await shellPage.evaluate(() => window.scrollY > 0));
+  await shellPage.locator('.tab[data-tab="lineage"]').click();
+  await shellPage.waitForTimeout(220);
+  assert.equal(await shellPage.evaluate(() => window.scrollY), 0, "같은 탭을 다시 눌렀는데 최상단으로 되돌아오지 않았습니다.");
+
+  /* (c) 이어 보던 목록 페이지도 하단 탭으로 다시 열면 첫 페이지에서 시작한다 */
+  await shellPage.locator('.tab[data-tab="library"]').click();
+  await shellPage.waitForTimeout(220);
+  const libFirstPage = await shellPage.locator("#lib-list > .card").count();
+  await shellPage.locator("[data-load-more]").click();
+  await shellPage.waitForTimeout(220);
+  assert.ok(await shellPage.locator("#lib-list > .card").count() > libFirstPage, "더 보기가 목록을 잇지 않아 첫 페이지 복귀를 판정할 수 없습니다.");
+  await shellPage.locator('.tab[data-tab="record"]').click();
+  await shellPage.waitForTimeout(220);
+  await shellPage.locator('.tab[data-tab="library"]').click();
+  await shellPage.waitForTimeout(220);
+  assert.equal(await shellPage.locator("#lib-list > .card").count(), libFirstPage, "하단 탭으로 다시 연 서재가 첫 페이지가 아닙니다.");
+
+  /* (d) 계보 진행률 — 분야마다 탭 1개, 누르면 그 분야 목록이 펼쳐진다 */
+  await shellPage.locator('.tab[data-tab="record"]').click();
+  await shellPage.waitForTimeout(220);
+  const domainTabs = shellPage.locator("[data-progress-domain]");
+  assert.equal(await domainTabs.count(), 6, "계보 진행률의 분야 탭이 6개가 아닙니다.");
+  assert.equal(await shellPage.locator('[data-progress-domain][aria-expanded="true"]').count(), 0,
+    "기록 화면 첫 페이지에서 진행률 목록이 이미 펼쳐져 있습니다.");
+  assert.equal(await shellPage.locator(".progress-book").count(), 0);
+
+  const firstTab = domainTabs.nth(0);
+  const firstDomain = await firstTab.getAttribute("data-progress-domain");
+  const firstTotal = Number((await firstTab.locator("b").textContent()).match(/\/\s*(\d+)권/u)[1]);
+  await firstTab.click();
+  await shellPage.waitForTimeout(180);
+  assert.equal(await firstTab.getAttribute("aria-expanded"), "true", `${firstDomain} 탭을 눌러도 펼쳐지지 않았습니다.`);
+  const firstPanelId = await firstTab.getAttribute("aria-controls");
+  assert.equal(await shellPage.locator(`#${firstPanelId} .progress-book`).count(), firstTotal,
+    `${firstDomain} 목록 행 수가 진행률 분모와 다릅니다.`);
+  assert.notEqual(await shellPage.evaluate(() => document.activeElement?.tagName), "BODY",
+    "분야 탭을 누른 뒤 포커스가 본문 밖으로 떨어졌습니다(§8-1).");
+
+  await domainTabs.nth(1).click();
+  await shellPage.waitForTimeout(180);
+  assert.equal(await shellPage.locator('[data-progress-domain][aria-expanded="true"]').count(), 1,
+    "계보 진행률이 두 분야를 동시에 펼쳤습니다.");
+  assert.equal(await domainTabs.nth(1).getAttribute("aria-expanded"), "true");
+  await domainTabs.nth(1).click();
+  await shellPage.waitForTimeout(180);
+  assert.equal(await shellPage.locator(".progress-book").count(), 0, "같은 분야 탭을 다시 눌러도 목록이 접히지 않았습니다.");
+
+  await firstTab.click();
+  await shellPage.waitForTimeout(180);
+  assert.deepEqual(await shellPage.locator(".progress-row, .progress-book").evaluateAll((nodes) => nodes
+    .filter((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.height < 44;
+    })
+    .map((node) => node.textContent.trim())), [], "계보 진행률에 44px 미달 터치 타깃이 있습니다.");
+  await shellPage.locator(".progress-book").nth(0).click();
+  await shellPage.waitForTimeout(240);
+  assert.equal(await shellPage.locator("#overlay-root .sheet").count(), 1, "진행률 목록에서 책 상세가 열리지 않았습니다.");
+  await shellPage.locator(".sheet-close").click();
+  await shellPage.waitForTimeout(300);
+  assert.ok(await shellPage.locator(".progress-book").count() > 0, "책 상세를 닫자 펼쳐 두었던 목록이 사라졌습니다.");
+
+  /* (e) 기록 화면도 하단 탭으로 다시 열면 첫 페이지(전부 접힘)에서 시작한다 */
+  await shellPage.locator('.tab[data-tab="record"]').click();
+  await shellPage.waitForTimeout(220);
+  assert.equal(await shellPage.locator(".progress-book").count(), 0, "하단 탭으로 다시 연 기록 화면이 첫 페이지가 아닙니다.");
+  assert.equal(await shellPage.evaluate(() => window.scrollY), 0);
+  assert.deepEqual(shell.probeErrors, [], "계보 진행률·첫 페이지 복귀 게이트에서 런타임 오류가 발생했습니다.");
+  await shell.probeContext.close();
+
   console.log(JSON.stringify({
     result: "pass",
     viewport: "390x844",
+    lineageProgressTabs: { domains: 6, singleOpen: true, opensBookSheet: true },
+    tabFirstPageReset: { scrollTop: true, libraryFirstPage: true, recordCollapsed: true },
     homeFirst: true,
     openingQuestionRotates: true,
     questionPool: catalog.questions,

@@ -325,9 +325,34 @@ body {
   background: var(--paper); resize: vertical;
 }
 .qa-item textarea::placeholder { color: var(--muted); }
-.progress-row { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
-.progress-row:last-child { border-bottom: none; }
-.progress-row b { font-variant-numeric: tabular-nums; color: var(--ink); }
+/* 계보 진행률 — 분야마다 탭 1개, 누르면 그 분야 책 목록이 아래로 펼쳐진다 */
+.progress-row {
+  display: flex; width: 100%; align-items: center; gap: 10px;
+  min-height: 44px; padding: 8px 2px; border-bottom: 1px solid var(--line);
+  background: none; border-left: none; border-right: none; border-top: none;
+  font-family: var(--sans); font-size: 14px; color: var(--ink);
+  text-align: left; cursor: pointer;
+}
+.progress-row:last-of-type:not([aria-expanded="true"]) { border-bottom: none; }
+.progress-row b { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--ink); }
+.progress-row::after {
+  content: ""; flex: 0 0 8px; height: 8px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+}
+.progress-row[aria-expanded="true"]::after { transform: translateY(2px) rotate(-135deg); }
+.progress-panel { padding: 2px 0 8px; border-bottom: 1px solid var(--line); }
+.progress-panel:last-child { border-bottom: none; }
+.progress-book {
+  display: flex; width: 100%; align-items: center; gap: 8px;
+  min-height: 44px; padding: 6px 2px;
+  background: none; border: none; text-align: left; cursor: pointer;
+  font-family: var(--sans);
+}
+.progress-book .tier { flex: 0 0 auto; margin-bottom: 0; }
+.progress-book .t { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--ink); word-break: keep-all; }
+.progress-book .a { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.progress-book .badge-read, .progress-book .badge-reading { flex: 0 0 auto; }
 
 /* 하단 탭 */
 .tabbar {

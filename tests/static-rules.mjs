@@ -54,7 +54,7 @@ for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), 
 for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
-assert.match(sw, /ccb-v1\.9\.0/u, "서비스워커 캐시 버전이 v1.9.0이어야 합니다.");
+assert.match(sw, /ccb-v1\.10\.0/u, "서비스워커 캐시 버전이 v1.10.0이어야 합니다.");
 assert.match(app, /register\("sw\.js", \{ updateViaCache: "none" \}\)/u, "SW 갱신 확인은 HTTP 캐시를 우회해야 합니다.");
 
 /* G-14 배포 갱신 통지 — 열린 탭의 히스토리를 건드리지 않고 통지만 한다 (§10-2 원장 12) */
@@ -100,4 +100,25 @@ assert.match(css, /@media \(prefers-reduced-motion: no-preference\)[\s\S]{0,240}
   "스트립 전환 효과는 prefers-reduced-motion을 존중해야 합니다.");
 assert.match(css, /animation: qstat-swap 1[0-2]\dms/u, "스트립 전환은 120ms 이내여야 합니다.");
 
-console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true }, null, 2));
+/* v1.10.0 §11-4 — 기록 탭 계보 진행률: 분야마다 탭 1개, 누르면 그 분야 목록이 펼쳐진다 */
+assert.match(app, /<button class="progress-row" data-progress-domain="\$\{esc\(d\)\}"/u,
+  "계보 진행률의 분야 행은 누를 수 있는 탭 버튼이어야 합니다.");
+assert.match(app, /aria-expanded="\$\{open\}" aria-controls="\$\{panelId\}"/u,
+  "계보 진행률 탭은 펼침 상태와 대상 목록을 함께 알려야 합니다.");
+assert.match(app, /class="progress-panel" id="\$\{panelId\}"/u, "계보 진행률 목록 패널 누락");
+assert.match(app, /function progressBookRow\(b\)\s*\{/u, "계보 진행률 목록 행 헬퍼 누락");
+assert.match(app, /openProgressDomain = openProgressDomain === domain \? null : domain/u,
+  "계보 진행률은 한 번에 한 분야만 펼쳐야 합니다.");
+assert.match(css, /\.progress-row\s*\{[^}]*min-height:\s*44px/u, "계보 진행률 탭 44px 세로 게이트 누락");
+assert.match(css, /\.progress-book\s*\{[^}]*min-height:\s*44px/u, "계보 진행률 목록 행 44px 세로 게이트 누락");
+
+/* v1.10.0 §6-6 N-9 — 하단 탭은 그 화면의 첫 페이지 최상단에서 시작한다 */
+assert.match(app, /function resetTabToFirstPage\(tab\)\s*\{/u, "하단 탭 첫 페이지 복귀 단일 헬퍼 누락");
+assert.match(app, /if \(!view\.overlay && view\.tab !== previous\.tab\) scrollPageTop\(\)/u,
+  "탭이 바뀌는 pushView 경로에서만 최상단으로 되돌려야 합니다(N-9).");
+assert.match(app, /resetTabToFirstPage\(t\.dataset\.tab\)/u, "탭 클릭이 첫 페이지 복귀를 거치지 않았습니다.");
+assert.match(app, /if \(cur\.overlay\) pushView\(\{ tab: cur\.tab, overlay: null \}\);\s*\n\s*else render\(\);\s*\n\s*scrollPageTop\(\)/u,
+  "이미 보고 있는 탭을 다시 눌러도 최상단으로 되돌아와야 합니다.");
+assert.equal((app.match(/function scrollPageTop\(/gu) || []).length, 1, "최상단 복귀는 단일 헬퍼여야 합니다.");
+
+console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true }, null, 2));

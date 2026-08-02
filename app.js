@@ -462,11 +462,14 @@ function readEntry(raw) {
 }
 
 function pushView(view) {
+  const previous = currentView;
   if (view.overlay && !top().overlay) overlayReturnFocus = rememberFocus(document.activeElement);
   currentView = view;
   pointer += 1;
   history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
   render();
+  // 탭이 바뀌는 이동은 그 화면의 최상단에서 시작한다. 오버레이 push 에는 적용하지 않는다(N-9).
+  if (!view.overlay && view.tab !== previous.tab) scrollPageTop();
 }
 function top() { return currentView; }
 
@@ -740,6 +743,7 @@ let libQuery = "", libDomain = state.prefs.libDomain, libTier = state.prefs.libT
 let libComposing = false;   // 한글 IME 조합 중 재렌더 잠금
 const LIB_PAGE_SIZE = 80;
 let libVisibleCount = LIB_PAGE_SIZE;
+let openProgressDomain = null;   // 기록 탭 계보 진행률에서 펼쳐 둔 분야 1개(세션 한정 — 복원 대상 아님, C5-2)
 let questionQuery = "", questionResults = [];
 const findBooksForQuestion = createQuestionSearch(ALL);
 
@@ -946,13 +950,37 @@ function applyLibQuery(input) {
 }
 
 /* ── 탭: 기록 ─────────────────────────────────────── */
+// 계보 진행률 탭을 펼쳤을 때 보이는 그 분야의 책 한 줄. 카드가 아니라 목록 행으로 두어
+// 같은 화면 아래쪽 개인 기록 섹션(읽는 중·읽은 책)과 역할이 섞여 보이지 않게 한다.
+function progressBookRow(b) {
+  return `
+    <button class="progress-book" data-open-book="${b.id}">
+      ${tierBadge(b)}
+      <span class="t">${esc(b.title)}<span class="a">${esc(b.author)}</span></span>
+      ${statusBadge(b.id)}
+    </button>`;
+}
+
 function renderRecord() {
   const reading = state.reading.map((id) => BY_ID.get(id)).filter(Boolean);
   const read = state.read.map((id) => BY_ID.get(id)).filter(Boolean);
-  const domainRows = DOMAINS.map((d) => {
-    const books = ALL.filter((b) => b.domain === d);
+  // 분야마다 탭 1개 — 누르면 그 분야의 책 목록이 바로 아래 펼쳐진다. 한 번에 한 분야만 열린다.
+  const domainRows = DOMAINS.map((d, index) => {
+    const books = ALL.filter((b) => b.domain === d)
+      .sort((a, z) => TIER_ORDER[a.tier] - TIER_ORDER[z.tier]);
     const done = books.filter((b) => state.read.includes(b.id)).length;
-    return `<div class="progress-row"><span>${esc(d)}</span><b>${done} / ${books.length}권</b></div>`;
+    const open = openProgressDomain === d;
+    const panelId = `progress-panel-${index}`;
+    return `
+      <button class="progress-row" data-progress-domain="${esc(d)}"
+        aria-expanded="${open}" aria-controls="${panelId}">
+        <span class="name">${esc(d)}</span>
+        <b>${done} / ${books.length}권</b>
+      </button>
+      <div class="progress-panel" id="${panelId}" role="group"
+        aria-label="${esc(d)} 책 목록"${open ? "" : " hidden"}>
+        ${open ? books.map((b) => progressBookRow(b)).join("") : ""}
+      </div>`;
   }).join("");
 
   const qa = state.questions.map((x) => {
@@ -1363,8 +1391,14 @@ function scrollPageTop() {
   requestAnimationFrame(() => window.scrollTo(0, 0));
 }
 
+// 하단 탭으로 화면을 열면 그 화면의 첫 페이지에서 시작한다 — 이어 보던 목록 페이지와 펼쳐 둔 항목을 되돌린다.
+function resetTabToFirstPage(tab) {
+  if (tab === "library") libVisibleCount = LIB_PAGE_SIZE;
+  if (tab === "record") openProgressDomain = null;
+}
+
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
   if (t.dataset.home) {
@@ -1423,8 +1457,13 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.tab) {
     if (t.dataset.tab === "question") { goHome(); return; }   // 홈 탭 = 첫 화면 복귀로 통일
     const cur = top();
-    if (cur.tab === t.dataset.tab && !cur.overlay) return;
-    pushView({ tab: t.dataset.tab, overlay: null });
+    resetTabToFirstPage(t.dataset.tab);
+    // 탭이 바뀌는 이동은 pushView 가 최상단으로 내린다(N-9).
+    if (cur.tab !== t.dataset.tab) { pushView({ tab: t.dataset.tab, overlay: null }); return; }
+    // 이미 보고 있는 탭을 다시 눌러도 그 화면의 첫 페이지 최상단으로 되돌아온다.
+    if (cur.overlay) pushView({ tab: cur.tab, overlay: null });
+    else render();
+    scrollPageTop();
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
@@ -1481,8 +1520,15 @@ document.addEventListener("click", (e) => {
     libDomain = domain;
     libTier = "전체";
     libVisibleCount = LIB_PAGE_SIZE;
-    pushView({ tab: "library", overlay: null });
-    scrollPageTop();
+    pushView({ tab: "library", overlay: null });   // 최상단 이동은 pushView 의 N-9 경로가 맡는다
+  } else if (t.dataset.progressDomain) {
+    // 계보 진행률 분야 탭 — 같은 분야를 다시 누르면 접고, 다른 분야를 누르면 그쪽만 펼친다.
+    const domain = t.dataset.progressDomain;
+    openProgressDomain = openProgressDomain === domain ? null : domain;
+    render();
+    // 기록 화면을 통째로 다시 그리므로 눌린 버튼이 사라진다 — 같은 분야 탭으로 포커스를 되돌린다(§8-1).
+    [...document.querySelectorAll("[data-progress-domain]")]
+      .find((element) => element.dataset.progressDomain === domain)?.focus();
   } else if (t.dataset.domain) {
     const domain = t.dataset.domain;
     if (!commit(() => { state.prefs.lineageDomain = domain; })) return;
