@@ -609,6 +609,9 @@ function hideExit() {
   if (!exitEl.hidden) {
     setExitBackgroundInert(false);
     exitEl.hidden = true;
+    // 팝업이 오버레이 위에 떴다면 배경 잠금은 오버레이 몫으로 되돌린다 —
+    // 무조건 해제하면 시트가 열린 채 뒤 화면이 다시 조작 가능해진다(원장 39).
+    if (top().overlay) setOverlayBackgroundInert(true);
     if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
 }
@@ -616,6 +619,9 @@ function hideExit() {
 function stayAtHome() {
   hideExit();
 }
+
+// 앱 안의 시트는 배경 탭으로 닫힌다. 종료 팝업만 무반응이면 방문자는 갇힌 것으로 느낀다(원장 66).
+exitEl.addEventListener("click", (e) => { if (e.target === exitEl) stayAtHome(); });
 
 /* ── 첫 화면 복귀 goHome (v1.8.0 §11-3) ───────────── */
 let homeNavInProgress = false;   // go(-d) 비동기 구간 중복 호출 잠금
@@ -682,21 +688,23 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// [닫기] 결정적 폴백 (PRD F8): ① 창 닫기 시도 ② 차단되면 닫힘 화면 — 어떤 환경에서도 무반응 금지
+/* [닫기] — window.close() 는 스크립트가 연 창이 아니면 브라우저가 항상 차단하고 콘솔 경고만 남긴다
+   (실측 3/3). 닫히지도 않으면서 경고를 남기는 호출은 제거하고 닫힘 화면으로 바로 간다(원장 60).
+   닫힘 화면은 막다른 길이 아니어야 하므로 다시 열기 버튼을 둔다(§6-7 · 원장 38). */
 document.getElementById("exit-leave").addEventListener("click", () => {
-  window.close();
-  setTimeout(() => {
-    appClosed = true;
-    setExitBackgroundInert(false);
-    history.replaceState({ closed: true }, "", HASH.question);
-    document.body.innerHTML = `
-      <div class="goodbye" role="status" aria-live="polite">
-        <div class="goodbye-box">
-          <p class="t">천책빵 사용을 마쳤습니다.</p>
-          <p class="d">브라우저가 창 닫기를 제한한 경우 기기의 홈 화면으로 돌아가세요.</p>
-        </div>
-      </div>`;
-  }, 120);
+  appClosed = true;
+  setExitBackgroundInert(false);
+  history.replaceState({ closed: true }, "", HASH.question);
+  document.body.innerHTML = `
+    <div class="goodbye" role="status" aria-live="polite">
+      <div class="goodbye-box">
+        <p class="t">천책빵 사용을 마쳤습니다.</p>
+        <p class="d">읽은 자리와 기록은 이 기기에 그대로 있습니다.</p>
+        <button class="btn btn-primary" id="reopen-app">다시 열기</button>
+      </div>
+    </div>`;
+  document.getElementById("reopen-app").focus();
+  document.getElementById("reopen-app").addEventListener("click", () => location.reload());
 });
 
 /* ── 렌더 공통 ─────────────────────────────────────── */
@@ -743,6 +751,7 @@ let libQuery = "", libDomain = state.prefs.libDomain, libTier = state.prefs.libT
 let libComposing = false;   // 한글 IME 조합 중 재렌더 잠금
 const LIB_PAGE_SIZE = 80;
 let libVisibleCount = LIB_PAGE_SIZE;
+let dropArmedId = null;          // 수집 취소를 한 번 확인받는 대상 질문 id (세션 한정)
 let openProgressDomain = null;   // 기록 탭 계보 진행률에서 펼쳐 둔 분야 1개(세션 한정 — 복원 대상 아님, C5-2)
 let questionQuery = "", questionResults = [], questionNotice = "";
 const findBooksForQuestion = createQuestionSearch(ALL);
@@ -821,8 +830,8 @@ function renderQuestion() {
     journeyHtml = `
       <button class="card card-tap" data-open-jlist="1">
         <div class="card-title">여정 시작하기</div>
-        <div class="card-meta">${state.journeysDone.length}/${JOURNEYS.length} 완료</div>
-      </button>`;
+        <div class="card-meta">질문 하나를 따라 뿌리까지 읽습니다</div>
+      </button>`;   // 완료 수치는 위 스트립이 원천이다 — 한 화면에 두 번 두지 않는다(R6 · 원장 45)
   }
 
   const gaugeRows = DOMAINS.map((d) => {
@@ -834,7 +843,6 @@ function renderQuestion() {
         aria-label="${esc(d)} 책 목록 보기, ${done}권 읽음, 전체 ${books.length}권">
         <span class="name">${esc(d)}</span>
         <span class="bar"><i style="width:${pct}%"></i></span>
-        <span class="num">${done}/${books.length}</span>
       </button>`;
   }).join("");
 
@@ -1030,6 +1038,11 @@ function renderRecord() {
         <p class="q">${esc(qObj.text)}</p>
         <span class="src">${esc(b.author)}, ${esc(qObj.source)} · ${esc(x.date)} 수집</span>
         <textarea data-answer-q="${x.id}" placeholder="나의 답을 적어 둡니다 (기기에만 보관)">${esc(x.myAnswer || "")}</textarea>
+        <div class="qa-actions">${dropArmedId === x.id
+          ? `<span class="qa-warn">쓴 답도 함께 지워집니다.</span>
+             <button class="btn btn-ghost" data-drop-confirm="${x.id}">지우기</button>
+             <button class="btn btn-light" data-drop-cancel="1">취소</button>`
+          : `<button class="btn btn-light" data-drop-question="${x.id}">수집 취소</button>`}</div>
       </div>`;
   }).join("");
 
@@ -1180,6 +1193,7 @@ function renderJourneyDetail() {
           ${tierBadge(b)}
           <div class="card-title">${esc(b.title)}</div>
           <div class="card-meta">${esc(b.author)} · ${esc(b.era)}</div>
+          ${locked ? `<div class="lock-why">앞의 책을 먼저 읽으면 열립니다</div>` : ""}
         </label>
       </div>`;
   }).join("");
@@ -1257,13 +1271,16 @@ function renderProfile() {
         <button class="sheet-close" data-close-overlay="1" aria-label="내 서재 닫기">닫기</button>
         <h2 id="profile-title">${p ? esc(p.name) + "님의 서재" : "내 서재"}</h2>
         <p class="meta">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
-        <input class="profile-input" id="profile-name" type="text" maxlength="20"
-          placeholder="이름 또는 별명" value="${p ? esc(p.name) : ""}" aria-label="이름">
-        <p id="profile-note" class="profile-note">기록과 이름은 이 기기에만 보관됩니다.</p>
-        <div class="sheet-actions">
-          <button class="btn btn-primary" data-save-profile="1">${p ? "이름 변경" : "저장"}</button>
-          ${p ? `<button class="btn btn-ghost" data-clear-profile="1">이름 지우기</button>` : ""}
-        </div>
+        <form id="profile-form">
+          <input class="profile-input" id="profile-name" type="text" maxlength="20"
+            placeholder="이름 또는 별명" value="${p ? esc(p.name) : ""}" aria-label="이름"
+            aria-describedby="profile-note" enterkeyhint="done">
+          <p id="profile-note" class="profile-note">기록과 이름은 이 기기에만 보관됩니다.</p>
+          <div class="sheet-actions">
+            <button class="btn btn-primary" type="submit" data-save-profile="1">${p ? "이름 변경" : "저장"}</button>
+            ${p ? `<button class="btn btn-ghost" type="button" data-clear-profile="1">이름 지우기</button>` : ""}
+          </div>
+        </form>
         <p id="profile-alert" role="alert" hidden>이름 또는 별명을 입력해 주세요.</p>
       </div>
     </div>`;
@@ -1432,11 +1449,11 @@ function scrollPageTop() {
 // 하단 탭으로 화면을 열면 그 화면의 첫 페이지에서 시작한다 — 이어 보던 목록 페이지와 펼쳐 둔 항목을 되돌린다.
 function resetTabToFirstPage(tab) {
   if (tab === "library") libVisibleCount = LIB_PAGE_SIZE;
-  if (tab === "record") openProgressDomain = null;
+  if (tab === "record") { openProgressDomain = null; dropArmedId = null; }
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-save-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
+  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-drop-question],[data-drop-confirm],[data-drop-cancel],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
   if (t.dataset.home) {
@@ -1480,14 +1497,6 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.resetConfirm) {
     t.disabled = true;
     resetRecords();
-  } else if (t.dataset.saveProfile) {
-    t.disabled = true;                        // 진입 즉시 중복 탭 차단
-    const input = document.getElementById("profile-name");
-    const name = input.value.trim();
-    const alertEl = document.getElementById("profile-alert");
-    if (!name) { t.disabled = false; alertEl.hidden = false; input.focus(); return; }
-    if (!commit(() => { state.profile = { name }; })) { t.disabled = false; return; }
-    dismissOverlay(); // 프로필 시트 닫기
   } else if (t.dataset.clearProfile) {
     t.disabled = true;
     if (!commit(() => { state.profile = null; })) { t.disabled = false; return; }
@@ -1563,6 +1572,19 @@ document.addEventListener("click", (e) => {
     // 빈 결과 화면의 낱말 칩 — 이 서재가 답할 수 있는 질의로 곧장 갈아탄다(원장 18)
     runQuestionSearch(t.dataset.askTerm);
     requestAnimationFrame(() => document.querySelector(".question-results, .empty")?.scrollIntoView({ block: "start" }));
+  } else if (t.dataset.dropQuestion) {
+    dropArmedId = t.dataset.dropQuestion;      // 실행 전 1회 확인(C6-4)
+    render();
+  } else if (t.dataset.dropCancel) {
+    dropArmedId = null;
+    render();
+  } else if (t.dataset.dropConfirm) {
+    const questionKey = t.dataset.dropConfirm;
+    t.disabled = true;
+    if (!commit(() => { state.questions = state.questions.filter((x) => x.id !== questionKey); })) { t.disabled = false; return; }
+    dropArmedId = null;
+    announce("수집을 취소했습니다.");
+    render();
   } else if (t.dataset.progressDomain) {
     // 계보 진행률 분야 탭 — 같은 분야를 다시 누르면 접고, 다른 분야를 누르면 그쪽만 펼친다.
     const domain = t.dataset.progressDomain;
@@ -1611,7 +1633,40 @@ function runQuestionSearch(value) {
   return true;
 }
 
+/* 이름 저장은 이 함수 하나를 지난다. 버튼 클릭과 Enter 가 각각 저장하면 이중 실행이 된다(원장 27). */
+function saveProfile(button) {
+  const input = document.getElementById("profile-name");
+  const alertEl = document.getElementById("profile-alert");
+  const name = input.value.trim();
+  if (!name) {
+    alertEl.hidden = false;
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", "profile-alert profile-note");
+    input.focus();
+    return;
+  }
+  if (button) button.disabled = true;          // 진입 즉시 중복 탭 차단
+  if (!commit(() => { state.profile = { name }; })) { if (button) button.disabled = false; return; }
+  dismissOverlay();
+}
+
+// 다시 입력하면 경고를 걷는다 — 고쳐 썼는데 빨간 문구가 남아 있으면 저장이 안 된 줄 안다(원장 28).
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "profile-name") return;
+  const alertEl = document.getElementById("profile-alert");
+  if (alertEl && !alertEl.hidden) {
+    alertEl.hidden = true;
+    e.target.removeAttribute("aria-invalid");
+    e.target.setAttribute("aria-describedby", "profile-note");
+  }
+});
+
 document.addEventListener("submit", (e) => {
+  if (e.target.id === "profile-form") {
+    e.preventDefault();
+    saveProfile(e.target.querySelector("[data-save-profile]"));
+    return;
+  }
   if (e.target.id !== "question-search-form") return;
   e.preventDefault();
   const input = document.getElementById("question-search");

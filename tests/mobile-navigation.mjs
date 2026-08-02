@@ -388,7 +388,7 @@ try {
   assert.equal(await page.locator("#exit-dialog").isVisible(), true);
   assert.equal(page.url(), `${baseURL}/#question`);
 
-  await page.evaluate(() => { window.close = () => {}; });
+  // 앱이 window.close() 를 호출하지 않으므로 경고 은폐용 스텁을 제거했다(원장 60 · §6-7)
   await page.locator("#exit-leave").click();
   await page.waitForTimeout(180);
   assert.equal(await page.locator(".goodbye").isVisible(), true);
@@ -945,6 +945,137 @@ try {
     .map((node) => node.textContent.trim())), [], "검색 결과·낱말 칩에 44px 미달 터치 타깃이 있습니다.");
   assert.deepEqual(search16.probeErrors, [], "검색 도달성 게이트에서 런타임 오류가 발생했습니다.");
   await search16.probeContext.close();
+
+  /* [G-17] 되돌릴 수 있는가 · 보이는가 · 눌리는가 (W2·W3·W5 · 원장 25·26·27·28·38·40·42·51·60·63·64·66) */
+  const contrastRatio = (fg, bg) => {
+    const luminance = (color) => {
+      const [r, g, b] = color.match(/[\d.]+/gu).slice(0, 3).map((value) => Number(value) / 255)
+        .map((value) => (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+      return r * 0.2126 + g * 0.7152 + b * 0.0722;
+    };
+    const [high, low] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+    return (high + 0.05) / (low + 0.05);
+  };
+
+  /* 수집한 질문을 되돌릴 수 있다 — 확인 1회를 거치고, 저장소에서도 사라진다 (원장 63) */
+  const undo = await openProbe();
+  await undo.probePage.locator("[data-collect]").first().click();
+  await undo.probePage.waitForTimeout(240);
+  await undo.probePage.locator('.tab[data-tab="record"]').click();
+  await undo.probePage.waitForTimeout(260);
+  assert.equal(await undo.probePage.locator("[data-drop-question]").count(), 1, "수집한 질문에 철회 수단이 없습니다(원장 63).");
+  await undo.probePage.locator("[data-drop-question]").first().click();
+  await undo.probePage.waitForTimeout(200);
+  assert.equal(await undo.probePage.locator("[data-drop-confirm]").count(), 1, "수집 취소가 확인 없이 즉시 실행됩니다(C6-4).");
+  await undo.probePage.locator("[data-drop-confirm]").click();
+  await undo.probePage.waitForTimeout(300);
+  assert.equal(await undo.probePage.locator(".qa-item").count(), 0, "수집 취소 후에도 문답집에 항목이 남았습니다.");
+  assert.equal(
+    await undo.probePage.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).questions.length), 0,
+    "화면에서만 사라지고 저장소에는 남았습니다."
+  );
+
+  /* 이름: Enter 저장 · 경고 해제 · 상단바 불변 (원장 26·27·28) */
+  await undo.probePage.locator("#profile-btn").click();
+  await undo.probePage.waitForTimeout(260);
+  await undo.probePage.locator("[data-save-profile]").click();
+  await undo.probePage.waitForTimeout(200);
+  assert.equal(await undo.probePage.locator("#profile-alert").isVisible(), true, "빈 이름 경고가 뜨지 않습니다.");
+  await undo.probePage.locator("#profile-name").fill("가");
+  await undo.probePage.waitForTimeout(160);
+  assert.equal(await undo.probePage.locator("#profile-alert").isVisible(), false, "다시 입력해도 경고가 남습니다(원장 28).");
+  const barBefore = await undo.probePage.evaluate(() => Math.round(document.querySelector(".topbar").getBoundingClientRect().height));
+  await undo.probePage.locator("#profile-name").fill("아주아주긴이름을가진방문자");
+  await undo.probePage.locator("#profile-name").press("Enter");
+  await undo.probePage.waitForTimeout(360);
+  assert.equal(await undo.probePage.locator("#overlay-root .sheet").count(), 0, "이름 입력 후 Enter 가 저장하지 않습니다(원장 27).");
+  assert.equal(
+    await undo.probePage.evaluate(() => Math.round(document.querySelector(".topbar").getBoundingClientRect().height)), barBefore,
+    "긴 이름을 저장하자 상단바 높이가 변했습니다(원장 26)."
+  );
+
+  /* 진행바가 보인다 (원장 40) */
+  await undo.probePage.locator('.tab[data-tab="question"]').click();
+  await undo.probePage.waitForTimeout(320);
+  const gauge = await undo.probePage.evaluate(() => {
+    const bar = document.querySelector(".gauge-row .bar");
+    return {
+      fill: getComputedStyle(bar.querySelector("i")).backgroundColor,
+      track: getComputedStyle(bar).backgroundColor,
+      edge: getComputedStyle(bar).borderTopColor,
+      card: getComputedStyle(document.querySelector(".gauge")).backgroundColor,
+      numbers: document.querySelectorAll(".gauge-row .num").length,
+    };
+  });
+  assert.ok(contrastRatio(gauge.fill, gauge.track) >= 3, `진행바 채움/트랙 대비 ${contrastRatio(gauge.fill, gauge.track).toFixed(2)}:1 (임계 3:1).`);
+  assert.ok(contrastRatio(gauge.edge, gauge.card) >= 3, `진행바 트랙 경계/카드 대비 ${contrastRatio(gauge.edge, gauge.card).toFixed(2)}:1 (임계 3:1).`);
+  assert.equal(gauge.numbers, 0, "홈 게이지에 수치가 남아 있습니다 — 기록 탭과 중복입니다(R6 · 원장 44).");
+  assert.equal(
+    (await undo.probePage.locator("#view").innerText()).match(/\d+\s*\/\s*6/gu)?.length ?? 0, 1,
+    "홈 한 화면에 여정 완료 수치가 두 번 이상 나옵니다(R6 · 원장 45)."
+  );
+
+  /* 여정: 잠금은 감쇠가 아니라 설명으로 · 체크박스는 눌린다 (원장 42·51·64) */
+  await undo.probePage.locator("[data-open-jlist]").first().click();
+  await undo.probePage.waitForTimeout(300);
+  await undo.probePage.locator("[data-start-journey]").first().click();
+  await undo.probePage.waitForTimeout(400);
+  const lockedCard = await undo.probePage.evaluate(() => {
+    const boxes = [...document.querySelectorAll('#overlay-root input[type="checkbox"]')];
+    const locked = document.querySelector("#overlay-root .is-locked");
+    return {
+      small: boxes.filter((box) => { const rect = box.getBoundingClientRect(); return rect.width < 44 || rect.height < 44; }).length,
+      opacity: locked ? getComputedStyle(locked).opacity : "1",
+      why: document.querySelectorAll("#overlay-root .lock-why").length,
+      title: locked ? getComputedStyle(locked.querySelector(".card-title")).color : null,
+      background: locked ? getComputedStyle(locked).backgroundColor : null,
+    };
+  });
+  assert.equal(lockedCard.small, 0, `여정 체크박스 ${lockedCard.small}개가 44px 미만입니다(원장 51).`)      ;
+  assert.equal(lockedCard.opacity, "1", "잠금 카드를 opacity 로 감쇠하고 있습니다 — 텍스트 대비가 임계 아래로 떨어집니다(원장 42).");
+  assert.ok(lockedCard.why > 0, "잠긴 이유를 알려주는 문장이 없습니다(원장 64).");
+  assert.ok(contrastRatio(lockedCard.title, lockedCard.background) >= 4.5,
+    `잠금 카드 제목 대비 ${contrastRatio(lockedCard.title, lockedCard.background).toFixed(2)}:1 (임계 4.5:1).`);
+  await undo.probePage.keyboard.press("Escape");
+  await undo.probePage.waitForTimeout(320);
+  assert.deepEqual(undo.probeErrors, [], "되돌리기·대비 게이트에서 런타임 오류가 발생했습니다.");
+  await undo.probeContext.close();
+
+  /* 200% 확대에서 가로 스크롤도 잘림도 없다 (원장 25) */
+  const zoomContext = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 188, height: 406 } });
+  const zoomPage = await zoomContext.newPage();
+  await zoomPage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+  const zoom = await zoomPage.evaluate(() => {
+    const hero = document.querySelector(".q-text");
+    return {
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      clipped: hero.querySelector("span").scrollHeight - hero.clientHeight,
+    };
+  });
+  assert.equal(zoom.overflow, false, `200% 확대에서 가로 스크롤이 생깁니다(문서 ${zoom.scrollWidth}px > 188px, 원장 25).`);
+  assert.ok(zoom.clipped <= 0, `200% 확대에서 히어로 질문이 ${zoom.clipped}px 잘립니다(원장 25).`);
+  await zoomContext.close();
+
+  /* 종료: 배경 탭으로 닫히고, 닫힘 화면은 막다른 길이 아니며, 콘솔 경고가 없다 (원장 38·60·66) */
+  const exit = await openProbe();
+  await exit.probePage.goBack().catch(() => {});
+  await exit.probePage.waitForTimeout(400);
+  assert.equal(await exit.probePage.locator("#exit-dialog").isVisible(), true, "첫 화면 뒤로가기에서 종료 팝업이 뜨지 않습니다.");
+  await exit.probePage.mouse.click(195, 60);
+  await exit.probePage.waitForTimeout(300);
+  assert.equal(await exit.probePage.locator("#exit-dialog").isVisible(), false, "종료 팝업 배경을 눌러도 닫히지 않습니다(원장 66).");
+  await exit.probePage.goBack().catch(() => {});
+  await exit.probePage.waitForTimeout(400);
+  await exit.probePage.locator("#exit-leave").click();
+  await exit.probePage.waitForTimeout(400);
+  assert.equal(await exit.probePage.locator(".goodbye button").count(), 1, "닫힘 화면에 복귀 수단이 없습니다(원장 38).");
+  assert.deepEqual(exit.probeErrors.filter((message) => /close/iu.test(message)), [],
+    "닫기 실행이 콘솔 경고를 남깁니다 — window.close 는 항상 차단됩니다(원장 60).");
+  await exit.probePage.locator("#reopen-app").click();
+  await exit.probePage.waitForTimeout(800);
+  assert.equal(await currentTab(exit.probePage), "홈", "다시 열기가 앱을 복구하지 못했습니다.");
+  await exit.probeContext.close();
 
   console.log(JSON.stringify({
     result: "pass",

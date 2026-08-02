@@ -11,8 +11,12 @@
   --amber: #B4832F;       /* 등불: 진행바·그래픽 */
   --line: #E0E0D8;
   --muted: #5A5B55;       /* Paper·Silver 대비 4.5:1 이상 */
-  --card: #FFFFFF;
+  --card: #FCFCF8;        /* 순백 금지: 게이지 트랙 경계가 소실된다 */
   --canvas: #DFDFD8;
+  --progress-track: #E8E8DE;  /* 진행바 트랙 (테두리로 경계 확보) */
+  --progress-fill: #8F5A0E;   /* 진행바 채움 = bronze, 트랙 대비 5:1 이상 */
+  --progress-edge: #6E6E62;   /* 트랙 경계선: 카드 대비 3:1 이상 */
+  --outline-edge: #6E6E62;    /* btn-outline 테두리 (테마 토큰) */
   --serif: "Noto Serif KR", "Batang", "BatangChe", serif;
   --sans: "Pretendard", "Malgun Gothic", system-ui, sans-serif;
 }
@@ -31,6 +35,10 @@ html[data-theme="navy"] {
   --muted: #C2CDD6;
   --card: #18334B;
   --canvas: #091A2A;
+  --progress-track: #0E2438;
+  --progress-fill: #E2BF7A;
+  --progress-edge: #7C93A6;
+  --outline-edge: #7C93A6;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -65,6 +73,7 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;      /* 확대(188px)에서 44px 컨트롤 3개가 한 줄에 안 들어간다 — 넘치는 대신 접는다(원장 25) */
 }
 /* 브랜드·부제를 세로로 묶어 컨트롤 3개 자리를 만든다 — 한 줄 배치는 360px 에서 여유 0이었다 */
 .brand-group { flex: 1; min-width: 0; }
@@ -78,7 +87,7 @@ body {
   border-radius: 10px; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.brand-sub { font-size: 12.5px; color: var(--muted); }
+.brand-sub { font-size: 12.5px; color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .profile-btn {
   font-family: var(--sans);
   font-size: 13px; font-weight: 600;
@@ -87,7 +96,9 @@ body {
   border: 1px solid var(--silver-line);
   border-radius: 22px;
   min-height: 44px; min-width: 64px;
+  max-width: 40vw;                    /* 긴 이름이 상단바를 세로로 밀어내지 않는다(원장 26) */
   padding: 6px 14px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   cursor: pointer;
 }
 .theme-btn,
@@ -140,7 +151,7 @@ body {
   line-height: 1.4;
   font-weight: 600;
   word-break: keep-all;
-  height: 58px;              /* 2줄 고정 — 문장 길이와 무관하게 박스 높이 불변 */
+  min-height: 58px;          /* 2줄 기준 높이. 확대 상태에서는 늘어나 글자를 자르지 않는다(원장 25) */
   display: flex;
   align-items: center;
 }
@@ -153,6 +164,11 @@ body {
 .q-text.q-mid { font-size: 17.5px; }   /* 23~29자: 압축 1단 */
 .q-text.q-long { font-size: 15.5px; }  /* 30자~: 압축 2단 */
 .q-text.q-xlong { font-size: 13px; }   /* 41자~: 2줄 안에서 추가 압축 */
+/* 200% 확대 구간에서는 2줄 고정보다 글자 보존이 우선이다(WCAG 1.4.10). 일반 폭에서는 INV-9 그대로. */
+@media (max-width: 260px) {
+  .q-text { min-height: 0; }
+  .q-text span { -webkit-line-clamp: unset; overflow: visible; }
+}
 .q-actions { display: flex; gap: 8px; margin: 8px 0 10px; flex-wrap: wrap; align-items: center; }
 
 /* 수치 4개 — 박스 하단 가로 스트립, 각 탭으로 연결 */
@@ -210,14 +226,15 @@ body {
 }
 .btn-primary { background: var(--charcoal); color: #FFFFFF; }
 .btn-light { background: var(--card); color: var(--ink); border-color: var(--silver-line); }
-.btn-outline { background: transparent; color: var(--ink); border-color: #B9B9AE; }
+.btn-outline { background: transparent; color: var(--ink); border-color: var(--outline-edge); }
 .btn-ghost { background: transparent; color: var(--bronze); border-color: var(--line); }
 .btn-quiet {
   background: none; border: none; color: var(--muted);
   font-size: 13.5px; min-height: 44px; padding: 8px 10px; cursor: pointer;
   text-decoration: underline; text-underline-offset: 3px;
 }
-.btn:disabled { opacity: 0.45; cursor: default; }
+/* 비활성을 opacity 로 표현하면 텍스트 대비가 임계 아래로 떨어진다(실측 2.45:1). 전용 색을 쓴다(원장 41). */
+.btn:disabled { background: var(--silver); border-color: var(--silver-line); color: var(--ink); cursor: default; }
 
 /* 카드 공통 */
 .card {
@@ -263,12 +280,17 @@ body {
   font-family: var(--sans); text-align: left; cursor: pointer;
 }
 .gauge-row .name { flex: 0 0 66px; font-size: 13px; color: var(--ink); }
-.gauge-row .bar { flex: 1; height: 8px; border-radius: 4px; background: #F1F1EA; overflow: hidden; }
-.gauge-row .bar i { display: block; height: 100%; background: #E7D6B8; border-radius: 4px; } /* 아주 옅은 등불색 */
-.gauge-row .num { flex: 0 0 44px; text-align: right; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.gauge-row .bar {
+  flex: 1; height: 10px; border-radius: 5px; overflow: hidden;
+  background: var(--progress-track); border: 1px solid var(--progress-edge);
+}
+.gauge-row .bar i { display: block; height: 100%; background: var(--progress-fill); }
 
-.jprogress { height: 8px; border-radius: 4px; background: #ECECE3; overflow: hidden; margin-top: 10px; }
-.jprogress i { display: block; height: 100%; background: var(--amber); border-radius: 4px; }
+.jprogress {
+  height: 10px; border-radius: 5px; overflow: hidden; margin-top: 10px;
+  background: var(--progress-track); border: 1px solid var(--progress-edge);
+}
+.jprogress i { display: block; height: 100%; background: var(--progress-fill); }
 
 /* 계보 스트림 */
 .chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; }
@@ -353,6 +375,10 @@ body {
 .progress-book .t { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--ink); word-break: keep-all; }
 .progress-book .a { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); }
 .progress-note { font-size: 12.5px; font-weight: 700; color: var(--muted); padding: 6px 2px 2px; }
+
+/* 수집 취소 (원장 63) */
+.qa-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.qa-warn { font-size: 12.5px; color: var(--bronze); font-weight: 700; }
 
 /* 하단 탭 */
 .tabbar {
@@ -441,9 +467,26 @@ body {
 
 /* 여정 */
 .journey-check { display: flex; align-items: center; gap: 12px; }
-.journey-check.is-locked { opacity: 0.58; }
+.journey-check.is-locked { border-style: dashed; border-color: var(--progress-edge); background: var(--paper); }
 .journey-check.is-locked label { cursor: not-allowed; }
-.journey-check input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--charcoal); flex: 0 0 auto; }
+.journey-check .lock-why { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.journey-check input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none;
+  width: 44px; height: 44px; flex: 0 0 auto; margin: -11px 0;   /* 히트 44px, 시각 22px (원장 51) */
+  background: transparent; border: 0; cursor: pointer; position: relative;
+}
+.journey-check input[type="checkbox"]::after {
+  content: ""; position: absolute; inset: 11px;
+  border: 2px solid var(--progress-edge); border-radius: 5px; background: var(--card);
+}
+.journey-check input[type="checkbox"]:checked::after { background: var(--charcoal); border-color: var(--charcoal); }
+.journey-check input[type="checkbox"]:checked::before {
+  content: ""; position: absolute; z-index: 1; left: 17px; top: 19px;
+  width: 9px; height: 5px; border-left: 2px solid #FFFFFF; border-bottom: 2px solid #FFFFFF;
+  transform: rotate(-45deg);
+}
+.journey-check input[type="checkbox"]:disabled { cursor: not-allowed; }
+.journey-check input[type="checkbox"]:disabled::after { background: var(--silver); border-color: var(--silver-line); }
 .journey-done {
   background: var(--silver); color: var(--ink); border: 1px solid var(--silver-line);
   border-radius: 10px; padding: 20px 18px; margin-bottom: 10px;
@@ -495,9 +538,6 @@ body {
 html[data-theme="navy"] .tier-branch { background: #28455E; color: var(--muted); }
 html[data-theme="navy"] .badge-read { background: #274A3D; color: #D8EACF; }
 html[data-theme="navy"] .badge-reading { background: #4B3A21; color: #F0D8A6; }
-html[data-theme="navy"] .gauge-row .bar,
-html[data-theme="navy"] .jprogress { background: #29455D; }
-html[data-theme="navy"] .gauge-row .bar i { background: #8A7655; }
 html[data-theme="navy"] .btn-primary,
 html[data-theme="navy"] .chip[aria-pressed="true"],
 html[data-theme="navy"] .tier-root { color: #FFFFFF; }
