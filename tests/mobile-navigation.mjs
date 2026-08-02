@@ -890,6 +890,62 @@ try {
   assert.deepEqual(shell.probeErrors, [], "계보 진행률·첫 페이지 복귀 게이트에서 런타임 오류가 발생했습니다.");
   await shell.probeContext.close();
 
+  /* [G-16] 검색이 화면에서 실제로 도달하는가 (W1 · 원장 15·16·17·18)
+     엔진 단위 테스트만으로 UI 도달성을 보증하지 않는다(§3-5). 반드시 DOM 으로 확인한다. */
+  const search16 = await openProbe();
+  const searchPage = search16.probePage;
+
+  /* 서재 검색 — 띄어쓰기·구두점이 달라도 같은 결과 (원장 16) */
+  await searchPage.locator('.tab[data-tab="library"]').click();
+  await searchPage.waitForTimeout(220);
+  const libHits = {};
+  for (const query of ["총, 균, 쇠", "총균쇠", "사피엔스 "]) {
+    await searchPage.locator("#lib-search").fill(query);
+    await searchPage.waitForTimeout(220);
+    libHits[query] = await searchPage.locator("#lib-list > .card").count();
+  }
+  assert.equal(libHits["총균쇠"], libHits["총, 균, 쇠"],
+    `서재 검색이 띄어쓰기로 갈립니다 — "총, 균, 쇠" ${libHits["총, 균, 쇠"]}권 vs "총균쇠" ${libHits["총균쇠"]}권(원장 16).`);
+  assert.ok(libHits["총균쇠"] >= 1, "서재에서 '총균쇠' 가 0권입니다.");
+  assert.ok(libHits["사피엔스 "] >= 1, "끝 공백이 붙으면 서재 결과가 사라집니다.");
+
+  /* 홈 질문 검색 — 2글자 제목·한 글자 주제어가 화면에 뜬다 (원장 15·17) */
+  await searchPage.locator('.tab[data-tab="question"]').click();
+  await searchPage.waitForTimeout(350);
+  for (const [query, label] of [["맹자", "2글자 제목"], ["돈", "한 글자 주제어"]]) {
+    await searchPage.locator("#question-search").fill(query);
+    await searchPage.locator("#question-search-form").evaluate((form) => form.requestSubmit());
+    await searchPage.waitForTimeout(260);
+    assert.ok(await searchPage.locator(".question-hit").count() > 0, `${label} "${query}" 가 화면에서 0건입니다.`);
+  }
+
+  /* 공백만 제출해도 반응이 있다 (원장 17) */
+  await searchPage.locator("#question-search").fill("   ");
+  await searchPage.locator("#question-search-form").evaluate((form) => form.requestSubmit());
+  await searchPage.waitForTimeout(260);
+  assert.ok((await searchPage.locator(".empty").innerText()).includes("한 글자 이상"),
+    "공백만 제출했을 때 안내가 뜨지 않습니다(원장 17).");
+  assert.equal(await searchPage.evaluate(() => document.activeElement?.id), "question-search",
+    "공백 제출 후 포커스가 입력창에 남지 않았습니다.");
+
+  /* 빈 결과가 막다른 길이 아니다 — 낱말 칩으로 되짚어 간다 (원장 18) */
+  await searchPage.locator("#question-search").fill("zzzzz");
+  await searchPage.locator("#question-search-form").evaluate((form) => form.requestSubmit());
+  await searchPage.waitForTimeout(260);
+  const chips = searchPage.locator("[data-ask-term]");
+  assert.ok(await chips.count() > 0, "빈 결과 화면에 되짚을 낱말 칩이 없습니다 — 막다른 길입니다(원장 18).");
+  await chips.first().click();
+  await searchPage.waitForTimeout(300);
+  assert.ok(await searchPage.locator(".question-hit").count() > 0, "낱말 칩을 눌러도 결과가 나오지 않습니다.");
+  assert.deepEqual(await searchPage.locator("[data-ask-term], .question-hit").evaluateAll((nodes) => nodes
+    .filter((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.height < 44;
+    })
+    .map((node) => node.textContent.trim())), [], "검색 결과·낱말 칩에 44px 미달 터치 타깃이 있습니다.");
+  assert.deepEqual(search16.probeErrors, [], "검색 도달성 게이트에서 런타임 오류가 발생했습니다.");
+  await search16.probeContext.close();
+
   console.log(JSON.stringify({
     result: "pass",
     viewport: "390x844",

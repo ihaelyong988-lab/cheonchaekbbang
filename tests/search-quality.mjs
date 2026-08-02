@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { BOOKS } from "../data/books.js";
-import { createQuestionSearch } from "../lib/search.js";
+import { compactSearchText, createQuestionSearch, TOPIC_TERMS } from "../lib/search.js";
 
 const search = createQuestionSearch(BOOKS);
 const cases = [
@@ -70,4 +70,52 @@ assert.ok(
   "1자 주제어 '돈'도 경제·사회 결과를 내야 합니다(0↔8권 불안정 금지)."
 );
 
-console.log(JSON.stringify({ result: "pass", benchmarks: cases.length, maxResults: 8 }, null, 2));
+/* W1 신설 (2026-08-02 재조사) — 아는 책 이름·띄어쓰기·일상 어휘로 0건이 나오지 않는다 */
+const { CELEB_BOOKS } = await import("../data/celeb-books-2025.js");
+const ALL = [...BOOKS, ...(CELEB_BOOKS || [])];
+const searchAll = createQuestionSearch(ALL);
+
+/* 원장 15 — 2글자 제목·저자를 정확히 쳤는데 0건이면 방문자는 앱을 닫는다 */
+const twoLetter = ALL.filter((book) => book.title.length === 2 || book.author.length === 2);
+assert.ok(twoLetter.length >= 20, `2글자 대상이 ${twoLetter.length}종뿐입니다 — 게이트 모집단을 확인하세요.`);
+assert.deepEqual(
+  twoLetter.filter((book) => searchAll(book.title).length === 0 && searchAll(book.author).length === 0)
+    .map((book) => `${book.title}/${book.author}`),
+  [],
+  "2글자 제목·저자를 정확히 입력했는데 결과가 0건인 책이 있습니다(원장 15)."
+);
+
+/* 원장 16 — 띄어쓰기·구두점 차이로 결과가 사라지지 않는다 */
+for (const [a, b] of [["총, 균, 쇠", "총균쇠"], ["사피엔스 ", "사피엔스"]]) {
+  assert.deepEqual(
+    searchAll(a).map((item) => item.book.id),
+    searchAll(b).map((item) => item.book.id),
+    `"${a}" 와 "${b}" 의 결과가 다릅니다 — 정규화가 통일되지 않았습니다(원장 16).`
+  );
+}
+assert.equal(compactSearchText("총, 균, 쇠"), compactSearchText("총균쇠"), "compactSearchText 가 구두점·공백을 흡수하지 않습니다.");
+
+/* 원장 18 — 조사 변형과 일상 어휘 질의가 부당하게 0건이 되지 않는다 */
+for (const query of ["돈에", "돈도", "돈만", "정의라도", "역사마다"]) {
+  assert.ok(searchAll(query).length > 0, `조사 변형 "${query}" 가 0건입니다(원장 18 JOSA).`);
+}
+const everyday = ["어떻게 살아야 하는가", "돈은 어떻게 벌어야 하나", "인공지능 시대에 무엇을 배워야 하나",
+  "번아웃이 왔을 때", "아이를 어떻게 키워야 하나", "관계에 지칠 때", "죽음이 두렵다",
+  "회사를 그만두고 싶다", "글을 잘 쓰고 싶다", "실패가 두렵다"];
+const unfair = everyday.filter((query) => searchAll(query).length === 0);
+assert.ok(unfair.length <= 2, `일상 어휘 질의 ${everyday.length}건 중 0건이 ${unfair.length}건입니다: ${unfair.join(" / ")}`);
+
+/* 회귀 — 완화가 "아무거나 추천"으로 번지지 않는다 */
+assert.deepEqual(searchAll("어떻게 무엇 왜"), [], "핵심 낱말 없는 질문은 여전히 0건이어야 합니다.");
+assert.deepEqual(searchAll("하는가"), [], "의문 조각은 여전히 0건이어야 합니다.");
+assert.deepEqual(searchAll("zzzzz"), [], "말뭉치에 없는 낱말은 여전히 0건이어야 합니다.");
+assert.ok(TOPIC_TERMS.length >= 60, `등록 주제어가 ${TOPIC_TERMS.length}개입니다 — 빈 결과 칩 모집단이 부족합니다.`);
+
+console.log(JSON.stringify({
+  result: "pass",
+  benchmarks: cases.length,
+  maxResults: 8,
+  twoLetterCovered: twoLetter.length,
+  everydayZero: unfair.length,
+  topicTerms: TOPIC_TERMS.length,
+}, null, 2));
