@@ -69,6 +69,9 @@ const STORE_VERSION = 2;
 const LIB_TIERS = ["전체", "뿌리", "줄기", "가지"];
 const ORPHAN_KINDS = new Set(["read", "reading", "question", "journey"]);
 const ORPHAN_MAX = 300;
+/* 답변 상한 단일 출처(DI-3). 저장·입력·마크업이 각자 리터럴을 들고 있으면 한 곳만 고쳐도
+   화면은 더 받고 저장은 잘라내는 무경고 소실이 되살아난다. 값을 바꿀 곳은 여기 하나다. */
+const ANSWER_MAX = 10000;
 
 function asArray(value) { return Array.isArray(value) ? value : []; }
 function cloneState(value) { return JSON.parse(JSON.stringify(value)); }
@@ -99,7 +102,7 @@ function sanitizeState(source = {}) {
     orphans.push({
       kind, id,
       date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
-      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
+      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, ANSWER_MAX) : "",
     });
   };
   for (const item of asArray(source.orphans)) {
@@ -124,7 +127,7 @@ function sanitizeState(source = {}) {
       id: item.id,
       bookId: Q_BY_ID.get(item.id).bookId,
       date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
-      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
+      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, ANSWER_MAX) : "",
     });
   }
 
@@ -136,6 +139,18 @@ function sanitizeState(source = {}) {
     journey = { id: journeyDef.id, doneBookIds: journeyDef.bookIds.filter((id) => storedDone.has(id)) };
   }
 
+  /* 여정 체크가 켠 읽음의 직전 상태. 체크를 되돌리면 여기 적힌 책만 원복한다 —
+     방문자가 손으로 표시한 읽음까지 걷으면 기록이 사라진다(원장 30). 진행 중 여정의 책으로만 한정한다. */
+  const journeyBookIds = new Set(journeyDef ? journeyDef.bookIds : []);
+  const autoReadSeen = new Set();
+  const journeyAutoRead = [];
+  for (const item of asArray(source.journeyAutoRead)) {
+    if (!item || typeof item.id !== "string" || autoReadSeen.has(item.id)) continue;
+    if (!journeyBookIds.has(item.id)) continue;
+    autoReadSeen.add(item.id);
+    journeyAutoRead.push({ id: item.id, from: item.from === "reading" ? "reading" : "none" });
+  }
+
   const doneSeen = new Set();
   const journeysDone = [];
   for (const item of asArray(source.journeysDone)) {
@@ -145,23 +160,24 @@ function sanitizeState(source = {}) {
     journeysDone.push({
       id: item.id,
       date: typeof item.date === "string" ? item.date.slice(0, 10) : "",
-      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, 10000) : "",
+      myAnswer: typeof item.myAnswer === "string" ? item.myAnswer.slice(0, ANSWER_MAX) : "",
     });
   }
 
   // 진행 중 여정의 완료 답 초안. 저장 상한은 확정 답변과 같고, 여정이 없으면 남기지 않는다(§5-1).
-  const journeyDraft = journey && typeof source.journeyDraft === "string" ? source.journeyDraft.slice(0, 10000) : "";
+  const journeyDraft = journey && typeof source.journeyDraft === "string" ? source.journeyDraft.slice(0, ANSWER_MAX) : "";
   const profileName = typeof source.profile?.name === "string" ? source.profile.name.trim().slice(0, 20) : "";
   return {
     version: STORE_VERSION,
     read, reading, questions,
     rootArrivals: Number.isSafeInteger(source.rootArrivals) && source.rootArrivals >= 0 ? source.rootArrivals : 0,
-    journey, journeysDone, journeyDraft,
+    journey, journeysDone, journeyDraft, journeyAutoRead,
     profile: profileName ? { name: profileName } : null,
     theme: source.theme === "navy" ? "navy" : "silver",
     prefs: sanitizePrefs(source.prefs),
     onboardingDismissed: source.onboardingDismissed === true,
     orphans,
+    questionWeek: /^\d{4}-W\d{2}$/u.test(source.questionWeek) ? source.questionWeek : "",
     questionDeck: [...new Set(asArray(source.questionDeck))].filter((id) => VALID_QUESTION_IDS.has(id)),
     lastHeroQuestionId: VALID_QUESTION_IDS.has(source.lastHeroQuestionId) ? source.lastHeroQuestionId : null,
   };
@@ -197,6 +213,11 @@ const LOAD_FAIL_BANNER = "이 기기에 저장된 기록을 읽지 못했습니�
 function announce(message) {
   appStatus.textContent = "";
   requestAnimationFrame(() => { appStatus.textContent = message; });
+}
+/* 화면이 바뀌면 직전 화면의 문구를 걷는다. 채우기만 하면 기록 탭으로 옮겨 간 뒤에도
+   '8권을 찾았습니다' 가 남아 스크린리더가 지금 화면과 무관한 문장을 읽는다. */
+function clearAnnounce() {
+  appStatus.textContent = "";
 }
 
 // 보이는 통보 1건. #app-alert 자리에 담아 탭 렌더에 지워지지 않게 하고, 기존 라이브 리전 통보는 그대로 유지한다(원장 10).
@@ -262,6 +283,7 @@ function mergedForSave() {
     orphans: mergeItems(state.orphans, asArray(stored.orphans), base.orphans, (item) => `${item.kind}:${item.id}`),
     journey: mergeField(state.journey, stored.journey, base.journey),
     journeyDraft: mergeField(state.journeyDraft, stored.journeyDraft, base.journeyDraft),
+    journeyAutoRead: mergeField(state.journeyAutoRead, stored.journeyAutoRead, base.journeyAutoRead),
     profile: mergeField(state.profile, stored.profile, base.profile),
     theme: mergeField(state.theme, stored.theme, base.theme),
     prefs: mergeField(state.prefs, stored.prefs, base.prefs),
@@ -312,6 +334,7 @@ window.addEventListener("storage", (event) => {
   const next = sanitizeState({
     ...stored,
     journeyDraft: state.journeyDraft || stored.journeyDraft,
+    questionWeek: state.questionWeek,
     questionDeck: state.questionDeck,
     lastHeroQuestionId: state.lastHeroQuestionId,
   });
@@ -352,22 +375,53 @@ function cycleRead(id) {
   return setReadStatus(id, next[readStatus(id)]);
 }
 
-/* ── 홈 질문: 앱을 열 때마다 한 번씩 순환 ───────────── */
-function shuffledQuestionIds() {
-  const ids = Q_POOL.map((item) => item.id);
-  for (let i = ids.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [ids[i], ids[j]] = [ids[j], ids[i]];
+/* ── 이번 주의 질문 (주 1회 이상 갱신) ─────────────────
+   전에는 방문할 때마다 전체 질문에서 무작위로 뽑았다. 그래서 "이번 주의 질문"이라는 개념이 없었고
+   같은 날 열 번을 열면 열 문항이 전부 달랐다 — 화면의 접근 이름만 그렇게 적혀 있었을 뿐이다.
+   이제 주차를 씨앗으로 그 주에만 열리는 묶음을 만든다. 같은 주에는 같은 묶음, 주가 바뀌면 반드시 다른 묶음이다.
+   서버도 네트워크도 쓰지 않으므로 오프라인에서도 성립한다(INV-3 · INV-5). */
+const WEEK_POOL_SIZE = 14;
+
+// ISO 주 표기. 그 주의 목요일이 속한 해를 기준 연도로 삼는다(연말·연초 경계에서 주차가 갈리지 않게).
+function isoWeekKey(date = new Date()) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+// 주차 문자열 하나에서만 나오는 값. 같은 주는 같은 씨앗, 다른 주는 다른 씨앗이다.
+function weekSeed(key) {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
   }
-  return ids;
+  return hash >>> 0;
+}
+
+// 시작점만 주차로 바꾸고 고정 간격으로 훑는다 — 앞에서 잘라 쓰면 그 구간의 분야 편중이 그대로 나온다(§9 E-020).
+function weeklyQuestionIds(key) {
+  const ids = Q_POOL.map((item) => item.id);
+  const start = weekSeed(key) % ids.length;
+  const stride = Math.max(1, Math.floor(ids.length / WEEK_POOL_SIZE));
+  const picked = [];
+  for (let i = 0; i < WEEK_POOL_SIZE; i += 1) picked.push(ids[(start + i * stride) % ids.length]);
+  return [...new Set(picked)];
 }
 
 // 추첨은 메모리에만 남긴다. 저장은 [다른 질문]·pagehide·정화 확정 시점에만 일어난다(원장 3).
 function drawQuestion() {
+  const week = isoWeekKey();
+  if (state.questionWeek !== week) {          // 주가 바뀌면 지난주 덱을 버리고 이번 주 묶음으로 갈아탄다
+    state.questionWeek = week;
+    state.questionDeck = weeklyQuestionIds(week);
+  }
   let deck = state.questionDeck.filter((id) => Q_BY_ID.has(id));
-  if (deck.length === 0) deck = shuffledQuestionIds();
+  if (deck.length === 0) deck = weeklyQuestionIds(week);
   let id = deck.shift();
-  if (id === state.lastHeroQuestionId && deck.length > 0) {
+  if (id === state.lastHeroQuestionId && deck.length > 0) {   // 직전 질문 반복 금지(C1-3)
     deck.push(id);
     id = deck.shift();
   }
@@ -469,7 +523,7 @@ function pushView(view) {
   history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
   render();
   // 탭이 바뀌는 이동은 그 화면의 최상단에서 시작한다. 오버레이 push 에는 적용하지 않는다(N-9).
-  if (!view.overlay && view.tab !== previous.tab) scrollPageTop();
+  if (!view.overlay && view.tab !== previous.tab) { scrollPageTop(); clearAnnounce(); }
 }
 function top() { return currentView; }
 
@@ -564,12 +618,16 @@ window.addEventListener("popstate", (e) => {
     return;
   }
   const entry = readEntry(e.state);
-  if (exitReturnInProgress && entry.i === 0) {
-    exitReturnInProgress = false;
-    if (!exitEl.hidden) { clearHomeNav(); pendingHomeScroll = false; return; }
-  }
-  hideExit();
+  /* 센티널에서 forward 로 되돌아온 항목이다. 팝업은 띄운 채 두되 위치·뷰 동기화까지 건너뛰면 안 된다 —
+     여러 칸을 한 번에 뒤로 가면(뒤로 제스처 연타) 앱이 기억한 오버레이와 실제 히스토리가 어긋나고,
+     그 뒤 어떤 닫기 조작도 dismissOverlay→back→센티널로 되돌아와 새로고침 말고는 빠져나갈 길이 없어진다(N-12). */
+  const returningToTrap = exitReturnInProgress && entry.i === 0;
+  if (returningToTrap) exitReturnInProgress = false;
+  const keepExit = returningToTrap && !exitEl.hidden;
+  if (keepExit) { clearHomeNav(); pendingHomeScroll = false; }
+  else hideExit();
   const hadOverlay = Boolean(top().overlay);
+  const previousTab = top().tab;
   // 앞으로가기로 오버레이가 되살아나는 경로에도 복귀 지점을 남긴다(원장 14 정합).
   if (entry.view.overlay && !hadOverlay && !overlayReturnFocus) {
     overlayReturnFocus = rememberFocus(document.activeElement);
@@ -579,10 +637,16 @@ window.addEventListener("popstate", (e) => {
   if (!entry.known) history.replaceState({ i: pointer, view: currentView }, "");   // 미지 항목 인덱스 재기입(N-3)
   render();
   scheduleTapThroughRelease();                        // 복원 렌더 다음 프레임부터 관통 가드 해제를 센다(N-7)
-  if (hadOverlay && !top().overlay) {
+  if (keepExit) {
+    // render 가 오버레이 기준으로 배경 잠금을 다시 계산했으므로 팝업 몫으로 되돌린다.
+    setExitBackgroundInert(true);
+    lastFocus = null;                                 // 방금 렌더로 사라진 노드다 — 복귀 지점은 팝업이 닫힐 때 다시 정한다
+    document.getElementById("exit-stay").focus();
+  } else if (hadOverlay && !top().overlay) {
     lockTabbar();                                     // 해제 직후 배경 탭바 잠금(N-7)
     requestAnimationFrame(restoreOverlayFocus);
   }
+  if (previousTab !== currentView.tab) clearAnnounce();
   clearHomeNav();                                     // 도착 시 잠금 해제
   if (pendingHomeScroll) {                            // render→포커스 복귀 뒤에 스크롤
     pendingHomeScroll = false;
@@ -612,7 +676,10 @@ function hideExit() {
     // 팝업이 오버레이 위에 떴다면 배경 잠금은 오버레이 몫으로 되돌린다 —
     // 무조건 해제하면 시트가 열린 채 뒤 화면이 다시 조작 가능해진다(원장 39).
     if (top().overlay) setOverlayBackgroundInert(true);
-    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    // 팝업이 떠 있는 동안 렌더가 일어났으면 복귀 지점 노드는 이미 사라졌다. 그때는 현재 탭으로 되돌린다.
+    if (lastFocus?.isConnected) lastFocus.focus();
+    else (overlayRoot.querySelector(".sheet") || document.querySelector(".tab[aria-current=page]") || viewEl)?.focus();
+    lastFocus = null;
   }
 }
 
@@ -857,7 +924,7 @@ function renderQuestion() {
   lastStripKey = stripKey;
 
   viewEl.innerHTML = `
-    <section aria-label="오늘의 질문">
+    <section aria-label="이번 주의 질문">
       <div class="q-card">
         <p class="q-text${qSize}"><span>${esc(item.q.text)}</span></p>
         <div class="q-actions">
@@ -868,7 +935,7 @@ function renderQuestion() {
         <div class="q-stats" role="group" aria-label="나의 기록">
           <button class="qstat" data-tab="record"><b>${state.read.length}<small>/${ALL.length}</small></b><span>읽은 책</span></button>
           <button class="qstat is-ctx${flip}" data-tab="record"><b>${bookQCollected}<small>/${bookQCount}</small></b><span>수집한 질문</span></button>
-          <button class="qstat is-ctx${flip}" data-tab="lineage"><b>${bookSteps === 0 ? "도달" : `${bookSteps}단계`}</b><span>뿌리까지</span></button>
+          <button class="qstat is-ctx${flip}" data-tab="lineage" data-land-domain="${esc(b ? b.domain : "")}"><b>${bookSteps === 0 ? "도달" : `${bookSteps}단계`}</b><span>뿌리까지</span></button>
           <button class="qstat" data-open-jlist="1"><b>${state.journeysDone.length}<small>/${JOURNEYS.length}</small></b><span>여정 완료</span></button>
         </div>
       </div>
@@ -878,7 +945,7 @@ function renderQuestion() {
     ${questionSearchHtml()}
     ${lastQObj ? `
       <p class="section-label">최근 질문</p>
-      <button class="card card-tap" data-tab="record">
+      <button class="card card-tap" data-tab="record" data-land-question="${esc(lastQ.id)}">
         <div class="card-title" style="font-family:var(--serif)">${esc(lastQObj.text)}</div>
       </button>` : ""}
 
@@ -891,15 +958,31 @@ function renderQuestion() {
 }
 
 /* ── 탭: 계보 ─────────────────────────────────────── */
-function renderLineage() {
-  const books = ALL.filter((b) => b.domain === sessionDomain)
+function lineageBooks() {
+  return ALL.filter((b) => b.domain === sessionDomain)
     .sort((a, z) => TIER_ORDER[a.tier] - TIER_ORDER[z.tier]);
+}
+function lineageLabel() { return `${sessionDomain}의 계보 — 뿌리에서 가지로`; }
+
+function renderLineage() {
   viewEl.innerHTML = `
     <div class="chips" role="group" aria-label="분야 선택">
       ${DOMAINS.map((d) => `<button class="chip" data-domain="${esc(d)}" aria-pressed="${d === sessionDomain}">${esc(d)}</button>`).join("")}
     </div>
-    <p class="section-label">${esc(sessionDomain)}의 계보 — 뿌리에서 가지로</p>
-    <div class="stream">${books.map((b) => bookCard(b)).join("")}</div>`;
+    <p class="section-label">${esc(lineageLabel())}</p>
+    <div class="stream">${lineageBooks().map((b) => bookCard(b)).join("")}</div>`;
+}
+
+/* 분야를 바꿔도 칩 줄은 그대로 두고 라벨과 목록만 고친다. 화면을 통째로 다시 그리면
+   방금 누른 칩 노드가 사라져 포커스가 BODY 로 떨어진다(원장 20 · §9 E-017). */
+function updateLineageDomain() {
+  const stream = viewEl.querySelector(".stream");
+  if (!stream) { render(); return; }
+  for (const chip of viewEl.querySelectorAll("[data-domain]")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.domain === sessionDomain));
+  }
+  viewEl.querySelector(".section-label").textContent = lineageLabel();
+  stream.innerHTML = lineageBooks().map((b) => bookCard(b)).join("");
 }
 
 /* ── 탭: 서재 ─────────────────────────────────────── */
@@ -931,18 +1014,25 @@ function renderLibList() {
       : ""}`;
   viewEl.querySelector(".library-summary").textContent =
     `${libDomain === "전체" ? "전체 서재" : libDomain} · ${total}권`;
+  /* 좁혀진 상태에서 되돌릴 길을 한 곳에 둔다. 칩을 두 번 눌러 원복하는 방식은 지금 무엇이 걸려 있는지를
+     방문자가 스스로 추적해야 한다 — 홈 게이지로 들어온 방문자는 필터가 걸린 사실조차 모른다(원장 50 · 36). */
+  const narrowed = libDomain !== "전체" || libTier !== "전체" || Boolean(libQuery.trim());
+  document.getElementById("lib-reset").innerHTML = narrowed
+    ? `<button class="btn btn-light lib-reset" data-lib-reset="1">전체 보기로 되돌리기</button>`
+    : "";
 }
 
 function renderLibrary() {
   viewEl.innerHTML = `
     ${IS_SEED ? `<div class="notice">시드 데이터 ${ALL.length}권 — 정식 천 권 리스트 교체 예정</div>` : ""}
     <p class="library-summary"></p>
+    <div id="lib-reset"></div>
     <input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색">
     <div class="chips" role="group" aria-label="분야 필터">
       ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
     </div>
     <div class="chips" role="group" aria-label="계단 필터">
-      ${["전체", "뿌리", "줄기", "가지"].map((t) => `<button class="chip" data-libtier="${esc(t)}" aria-pressed="${t === libTier}">${esc(t)}</button>`).join("")}
+      ${LIB_TIERS.map((t) => `<button class="chip" data-libtier="${esc(t)}" aria-pressed="${t === libTier}">${esc(t)}</button>`).join("")}
     </div>
     <div id="lib-list"></div>`;
   renderLibList();
@@ -957,6 +1047,20 @@ function renderLibrary() {
     libComposing = false;
     applyLibQuery(input);                    // 조합 확정 시 1회만 렌더
   });
+}
+
+/* 필터 변경도 같은 경계를 쓴다 — 칩 줄은 남기고 눌린 상태와 목록만 고친다(원장 20). */
+// 같은 칩이 서재 탭과 설정 시트 양쪽에 있으므로 문서 전체를 대상으로 맞춘다(C4-1).
+function updateLibraryFilters() {
+  for (const chip of document.querySelectorAll("[data-libdomain]")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.libdomain === libDomain));
+  }
+  for (const chip of document.querySelectorAll("[data-libtier]")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.libtier === libTier));
+  }
+  const input = document.getElementById("lib-search");
+  if (input && input.value !== libQuery) input.value = libQuery;
+  if (document.getElementById("lib-list")) renderLibList();   // 서재 탭을 보고 있을 때만 목록이 있다
 }
 
 // 목록만 다시 그리므로 입력 노드와 선택 위치는 그대로 남는다 — 조합 잠금은 조합 중 렌더 보류용이다(원장 1).
@@ -1029,15 +1133,17 @@ function renderRecord() {
   const read = state.read.map((id) => BY_ID.get(id)).filter(Boolean);
   const domainRows = progressRowsHtml();
 
-  const qa = state.questions.map((x) => {
+  const qa = state.questions.map((x, index) => {
     const b = BY_ID.get(x.bookId);
     const qObj = Q_BY_ID.get(x.id)?.q;
     if (!b || !qObj) return "";
+    // 답칸의 접근 이름은 질문 문단이다 — placeholder 는 입력이 시작되면 사라져 이름 노릇을 못 한다(원장 52).
     return `
       <div class="card qa-item">
-        <p class="q">${esc(qObj.text)}</p>
+        <p class="q" id="qa-q-${index}">${esc(qObj.text)}</p>
         <span class="src">${esc(b.author)}, ${esc(qObj.source)} · ${esc(x.date)} 수집</span>
-        <textarea data-answer-q="${x.id}" placeholder="나의 답을 적어 둡니다 (기기에만 보관)">${esc(x.myAnswer || "")}</textarea>
+        <textarea data-answer-q="${x.id}" aria-labelledby="qa-q-${index}" maxlength="${ANSWER_MAX}"
+          placeholder="나의 답을 적어 둡니다 (기기에만 보관)">${esc(x.myAnswer || "")}</textarea>
         <div class="qa-actions">${dropArmedId === x.id
           ? `<span class="qa-warn">쓴 답도 함께 지워집니다.</span>
              <button class="btn btn-ghost" data-drop-confirm="${x.id}">지우기</button>
@@ -1046,14 +1152,15 @@ function renderRecord() {
       </div>`;
   }).join("");
 
-  const jqa = state.journeysDone.map((x) => {
+  const jqa = state.journeysDone.map((x, index) => {
     const j = JOURNEYS.find((y) => y.id === x.id);
     if (!j) return "";
     return `
       <div class="card qa-item">
-        <p class="q">${esc(j.question.text)}</p>
+        <p class="q" id="jqa-q-${index}">${esc(j.question.text)}</p>
         <span class="src">${esc(j.domain)} 여정 완료 · ${esc(x.date)}</span>
-        <textarea data-answer-j="${x.id}" placeholder="이 질문에 대한 나의 답">${esc(x.myAnswer || "")}</textarea>
+        <textarea data-answer-j="${x.id}" aria-labelledby="jqa-q-${index}" maxlength="${ANSWER_MAX}"
+          placeholder="이 질문에 대한 나의 답">${esc(x.myAnswer || "")}</textarea>
       </div>`;
   }).join("");
 
@@ -1067,7 +1174,7 @@ function renderRecord() {
     <p class="section-label">계보 진행률 (읽음 기준)</p>
     <div class="card">${domainRows}</div>
     <p class="section-label">나만의 문답집 — 개인 기록 전용</p>
-    ${qa || jqa ? jqa + qa : `<p class="empty">수집한 질문이 아직 없습니다. 오늘의 질문에서 시작해 보세요.</p>`}
+    ${qa || jqa ? jqa + qa : `<p class="empty">수집한 질문이 아직 없습니다. 이번 주의 질문에서 시작해 보세요.</p>`}
     ${reading.length ? `<p class="section-label">읽는 중 (${reading.length}권)</p>` + reading.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}
     ${read.length ? `<p class="section-label">읽은 책 (${read.length}권)</p>` + read.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}`;
 }
@@ -1169,6 +1276,10 @@ function renderJourneyList() {
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="여정 선택 닫기">닫기</button>
         <p class="section-label">질문 여정 — 하나의 질문, 뿌리에서 가지까지</p>
+        ${JOURNEYS.every((item) => state.journeysDone.some((x) => x.id === item.id))
+          // 완주 수치는 홈 스트립이 원천이므로 문구에 넣지 않는다(R6 · 원장 65).
+          ? `<div class="notice">모든 갈래의 질문을 지나 왔습니다. 남긴 답은 기록 탭 문답집에 그대로 있습니다.</div>`
+          : ""}
         ${state.journey ? `<div class="notice">진행 중인 여정을 완료한 뒤 새 여정을 시작할 수 있습니다.</div>` : ""}
         ${items}
       </div>
@@ -1231,7 +1342,7 @@ function journeyDoneHtml(j, allDone) {
       <p class="q-kicker">여정 완료</p>
       <p class="q">${esc(j.question.text)} — 이 질문에 대한 나의 답은 무엇인가.</p>
       <label class="sr-only" for="j-answer">이 질문에 대한 나의 답</label>
-      <textarea id="j-answer" data-answer-draft="1" maxlength="10000"
+      <textarea id="j-answer" data-answer-draft="1" maxlength="${ANSWER_MAX}"
         placeholder="나의 답 (기기에만 보관)">${esc(state.journeyDraft)}</textarea>
       <div class="sheet-actions">
         <button class="btn btn-light" data-finish-journey="${j.id}">여정 완료로 저장</button>
@@ -1302,6 +1413,13 @@ function renderSettings() {
         <div class="chips" role="group" aria-label="관심 분야 선택">
           ${DOMAINS.map((d) => `<button class="chip" data-setdomain="${esc(d)}" aria-pressed="${d === sessionDomain}">${esc(d)}</button>`).join("")}
         </div>
+        <p class="section-label">서재 필터</p>
+        <div class="chips" role="group" aria-label="서재 분야 선택">
+          ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
+        </div>
+        <div class="chips" role="group" aria-label="서재 계단 선택">
+          ${LIB_TIERS.map((tier) => `<button class="chip" data-libtier="${esc(tier)}" aria-pressed="${tier === libTier}">${esc(tier)}</button>`).join("")}
+        </div>
         <div class="settings-list">
           <button class="settings-row" data-toggle-theme="1" aria-label="화면 색 바꾸기, 지금은 ${state.theme === "navy" ? "남색" : "은회"}">
             <span>화면 색</span><span class="value">${state.theme === "navy" ? "남색" : "은회"}</span>
@@ -1371,11 +1489,9 @@ async function importRecords(file, button) {
 
 // 저장소만 지우면 다음 save 에서 되살아난다. 인메모리 state 와 병합 기준선을 정화 함수로 재초기화한다(C6-3).
 function resetRecords() {
-  const fresh = sanitizeState({
-    theme: state.theme,
-    prefs: state.prefs,
-    onboardingDismissed: state.onboardingDismissed,
-  });
+  /* 화면 색과 관심 분야는 기기 설정이라 남긴다. 안내 해제 표식은 기록과 함께 지운다 —
+     공용 기기에서 다음 사용자가 첫 방문자인데 등록 안내를 못 받으면 C2-2 가 무력화된다. */
+  const fresh = sanitizeState({ theme: state.theme, prefs: state.prefs });
   try { localStorage.removeItem(STORE_KEY); } catch { /* 실패 여부는 아래 save 결과로 판정한다 */ }
   Object.assign(state, fresh);
   syncedSnapshot = cloneState(fresh);
@@ -1433,6 +1549,10 @@ function render() {
   else if (v.overlay.type === "profile") renderProfile();
   else if (v.overlay.type === "settings") renderSettings();
 
+  syncTopbar();
+}
+
+function syncTopbar() {
   const pb = document.getElementById("profile-btn");
   pb.textContent = state.profile ? `${state.profile.name}님` : "내 서재";
   const themeButton = document.getElementById("theme-btn");
@@ -1441,9 +1561,38 @@ function render() {
   themeButton.setAttribute("aria-label", `${themeButton.textContent} 테마로 바꾸기`);
 }
 
+/* 설정 시트의 값 변경은 그 시트의 바뀐 부분만 고친다. 화면 전체를 다시 그리면 방금 누른 컨트롤이
+   사라져 포커스가 시트 루트로 떨어지고, 키보드 사용자는 값을 바꿀 때마다 Tab 순회를 처음부터 한다(§9 E-017). */
+function updateSettingsControls() {
+  for (const chip of overlayRoot.querySelectorAll("[data-setdomain]")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.setdomain === sessionDomain));
+  }
+  const themeRow = overlayRoot.querySelector(".settings-row[data-toggle-theme]");
+  if (themeRow) {
+    const label = state.theme === "navy" ? "남색" : "은회";
+    themeRow.querySelector(".value").textContent = label;
+    themeRow.setAttribute("aria-label", `화면 색 바꾸기, 지금은 ${label}`);
+  }
+  syncTopbar();
+}
+
 /* ── 이벤트 위임 ───────────────────────────────────── */
 function scrollPageTop() {
   requestAnimationFrame(() => window.scrollTo(0, 0));
+}
+
+/* 백링크가 가리킨 문답집 항목으로 데려간다. 문답집은 수집순이라 최근 질문일수록 아래에 놓여,
+   식별자 없이 기록 탭만 열면 착지점이 화면 밖 1,000px 아래가 된다(원장 37).
+   질문 id 에는 `#` 가 들어가므로 선택자로 쓰기 전에 반드시 이스케이프한다. */
+function landOnQuestion(questionKey) {
+  if (!questionKey) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const item = viewEl.querySelector(`[data-answer-q="${CSS.escape(questionKey)}"]`)?.closest(".qa-item");
+    if (!item) return;
+    for (const marked of viewEl.querySelectorAll(".is-landed")) marked.classList.remove("is-landed");
+    item.classList.add("is-landed");   // 정적 강조 — 어느 항목을 보러 왔는지 남긴다
+    item.scrollIntoView({ block: "center" });
+  }));
 }
 
 // 하단 탭으로 화면을 열면 그 화면의 첫 페이지에서 시작한다 — 이어 보던 목록 페이지와 펼쳐 둔 항목을 되돌린다.
@@ -1453,10 +1602,14 @@ function resetTabToFirstPage(tab) {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-drop-question],[data-drop-confirm],[data-drop-cancel],[data-libdomain],[data-libtier],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
+  const t = e.target.closest("[data-skip-to],[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-drop-question],[data-drop-confirm],[data-drop-cancel],[data-libdomain],[data-libtier],[data-lib-reset],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
-  if (t.dataset.home) {
+  if (t.dataset.skipTo) {
+    const target = t.dataset.skipTo === "tabbar" ? document.querySelector(".tabbar .tab") : viewEl;
+    target?.focus();
+    if (t.dataset.skipTo === "tabbar") target?.scrollIntoView({ block: "nearest" });
+  } else if (t.dataset.home) {
     goHome();
   } else if (t.dataset.applyUpdate) {
     t.disabled = true;                        // 확인은 1회만 받는다
@@ -1466,7 +1619,10 @@ document.addEventListener("click", (e) => {
     const next = state.theme === "navy" ? "silver" : "navy";
     if (!commit(() => { state.theme = next; })) return;
     applyTheme();
-    render();
+    // 색은 CSS 토큰이 바꾸므로 본문을 다시 그릴 필요가 없다. 설정 시트에서는 눌린 행만 갱신한다.
+    if (top().overlay?.type === "settings") updateSettingsControls();
+    else render();
+    announce(`화면 색을 ${next === "navy" ? "남색" : "은회"} 로 바꿨습니다.`);
   } else if (t.dataset.openProfile) {
     pushView({ tab: top().tab, overlay: { type: "profile" } });
   } else if (t.dataset.openSettings) {
@@ -1479,7 +1635,8 @@ document.addEventListener("click", (e) => {
     const domain = t.dataset.setdomain;
     if (!commit(() => { state.prefs.lineageDomain = domain; })) return;
     sessionDomain = domain;
-    render();
+    updateSettingsControls();   // 시트를 닫을 때 popstate 가 본문을 다시 그린다
+    announce(`관심 분야를 ${domain} 으로 정했습니다.`);
   } else if (t.dataset.exportRecords) {
     exportRecords();
   } else if (t.dataset.importRecords) {
@@ -1503,14 +1660,19 @@ document.addEventListener("click", (e) => {
     dismissOverlay();
   } else if (t.dataset.tab) {
     if (t.dataset.tab === "question") { goHome(); return; }   // 홈 탭 = 첫 화면 복귀로 통일
+    /* 백링크가 착지 분야를 실어 오면 그 분야로 연다. 저장된 관심 분야는 바꾸지 않는다 —
+       이동 버튼 하나가 방문자가 고른 값을 덮어써서는 안 된다(원장 34 · N-11). */
+    if (t.dataset.landDomain && DOMAINS.includes(t.dataset.landDomain)) sessionDomain = t.dataset.landDomain;
+    const landQuestion = t.dataset.landQuestion || "";
     const cur = top();
     resetTabToFirstPage(t.dataset.tab);
-    // 탭이 바뀌는 이동은 pushView 가 최상단으로 내린다(N-9).
-    if (cur.tab !== t.dataset.tab) { pushView({ tab: t.dataset.tab, overlay: null }); return; }
+    // 탭이 바뀌는 이동은 pushView 가 최상단으로 내린다(N-9). 착지 대상이 있으면 그 뒤 프레임에서 덮어쓴다.
+    if (cur.tab !== t.dataset.tab) { pushView({ tab: t.dataset.tab, overlay: null }); landOnQuestion(landQuestion); return; }
     // 이미 보고 있는 탭을 다시 눌러도 그 화면의 첫 페이지 최상단으로 되돌아온다.
     if (cur.overlay) pushView({ tab: cur.tab, overlay: null });
     else render();
     scrollPageTop();
+    landOnQuestion(landQuestion);
   } else if (t.dataset.openBook) {
     pushView({ tab: top().tab, overlay: { type: "sheet", bookId: t.dataset.openBook } });
   } else if (t.dataset.openTrail) {
@@ -1523,7 +1685,11 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.startJourney) {
     const journeyId = t.dataset.startJourney;
     if (!state.journey) {
-      if (!commit(() => { state.journey = { id: journeyId, doneBookIds: [] }; state.journeyDraft = ""; })) return;
+      if (!commit(() => {
+        state.journey = { id: journeyId, doneBookIds: [] };
+        state.journeyDraft = "";
+        state.journeyAutoRead = [];
+      })) return;
     }
     pushView({ tab: top().tab, overlay: { type: "jdetail" } });
   } else if (t.dataset.finishJourney) {
@@ -1540,11 +1706,16 @@ document.addEventListener("click", (e) => {
       state.journeysDone.push({ id: journeyId, date: today(), myAnswer });
       state.journey = null;
       state.journeyDraft = "";
+      state.journeyAutoRead = [];   // 완주한 여정의 읽음은 방문자의 실적으로 확정한다
     })) { t.disabled = false; return; }
     dismissOverlay(); // 여정 화면 닫기 → 이전 화면
   } else if (t.dataset.quitJourney) {
     t.disabled = true;
-    if (!commit(() => { state.journey = null; state.journeyDraft = ""; })) { t.disabled = false; return; }
+    if (!commit(() => {
+      state.journey = null;
+      state.journeyDraft = "";
+      state.journeyAutoRead = [];   // 그만두어도 이미 읽은 책은 읽은 것이다 — 추적만 걷는다
+    })) { t.disabled = false; return; }
     announce("진행 중이던 여정을 그만두었습니다.");
     dismissOverlay();
   } else if (t.dataset.collect) {
@@ -1554,20 +1725,26 @@ document.addEventListener("click", (e) => {
       if (!bookId) return;
       // 저장이 거부되면 수집됨 표시로 넘어가지 않는다(DI-4).
       if (!commit(() => { state.questions.push({ id: questionKey, bookId, date: today(), myAnswer: "" }); })) return;
+      render();
+      announce("질문을 수집했습니다. 기록 탭 문답집에서 답을 적을 수 있습니다.");
+      return;
     }
     render();
   } else if (t.dataset.shuffle) {
     heroQuestion = drawQuestion();
     save();                                   // 추첨 확정 시점(원장 3). 실패는 save 안에서 배너·낭독으로 알린다
     render();
+    announce(`다음 질문으로 바꿨습니다. ${heroQuestion.q.text}`);
   } else if (t.dataset.openDomainList) {
     const domain = t.dataset.openDomainList;
-    commit(() => { state.prefs.libDomain = domain; state.prefs.libTier = "전체"; });
+    /* 이동이 건 필터는 이번 세션에만 적용한다. 저장된 서재 필터까지 덮어쓰면 방문자가 골라 둔 값이
+       다른 화면의 이동 버튼 하나로 사라지고 재방문에도 그대로 남는다(N-11 · 원장 50). */
     libQuery = "";
     libDomain = domain;
     libTier = "전체";
     libVisibleCount = LIB_PAGE_SIZE;
     pushView({ tab: "library", overlay: null });   // 최상단 이동은 pushView 의 N-9 경로가 맡는다
+    announce(`${domain} 분야로 좁혀 서재를 열었습니다.`);
   } else if (t.dataset.askTerm) {
     // 빈 결과 화면의 낱말 칩 — 이 서재가 답할 수 있는 질의로 곧장 갈아탄다(원장 18)
     runQuestionSearch(t.dataset.askTerm);
@@ -1594,25 +1771,40 @@ document.addEventListener("click", (e) => {
     const domain = t.dataset.domain;
     if (!commit(() => { state.prefs.lineageDomain = domain; })) return;
     sessionDomain = domain;
-    render();
+    updateLineageDomain();
+    announce(`${domain} 계보를 열었습니다.`);
   } else if (t.dataset.libdomain) {
     const domain = t.dataset.libdomain;
     if (!commit(() => { state.prefs.libDomain = domain; })) return;
     libDomain = domain;
     libVisibleCount = LIB_PAGE_SIZE;
-    render();
+    updateLibraryFilters();
+    announce(`서재를 ${domain} 으로 좁혔습니다.`);
   } else if (t.dataset.libtier) {
     const tier = t.dataset.libtier;
     if (!commit(() => { state.prefs.libTier = tier; })) return;
     libTier = tier;
     libVisibleCount = LIB_PAGE_SIZE;
-    render();
+    updateLibraryFilters();
+    announce(`계단을 ${tier} 로 좁혔습니다.`);
+  } else if (t.dataset.libReset) {
+    // 명시적 되돌림이므로 저장된 필터까지 함께 푼다. 검색어는 세션 값이라 지우기만 한다(C5-2).
+    if (!commit(() => { state.prefs.libDomain = "전체"; state.prefs.libTier = "전체"; })) return;
+    libDomain = "전체";
+    libTier = "전체";
+    libQuery = "";
+    libVisibleCount = LIB_PAGE_SIZE;
+    updateLibraryFilters();
+    // 되돌림 버튼은 지금 사라졌다. 포커스를 잃지 않게 그 자리를 대신하는 분야 칩으로 넘긴다.
+    viewEl.querySelector('[data-libdomain="전체"]')?.focus();
+    announce("서재를 전체 보기로 되돌렸습니다.");
   } else if (t.dataset.loadMore) {
     libVisibleCount += LIB_PAGE_SIZE;
     renderLibList();                               // 목록만 이어 그린다 — 검색 입력·칩은 그대로 둔다
   } else if (t.dataset.cycleRead) {
     if (!cycleRead(t.dataset.cycleRead)) return;   // 저장 실패 시 읽음 배지를 켜지 않는다(DI-4)
     render();
+    announce(`읽음 상태를 ${{ none: "안 읽음", reading: "읽는 중", read: "읽음" }[readStatus(t.dataset.cycleRead)]} 으로 바꿨습니다.`);
   } else if (t.dataset.gotoLineage) {
     sessionDomain = t.dataset.gotoLineage;
     pushView({ tab: "lineage", overlay: null });
@@ -1693,10 +1885,20 @@ document.addEventListener("change", (e) => {
   commit(() => {
     if (checked) {
       if (!state.journey.doneBookIds.includes(id)) state.journey.doneBookIds.push(id);
+      const before = readStatus(id);
+      // 여정이 켠 읽음만 기록한다. 이미 읽음이던 책은 되돌릴 것이 없다.
+      if (before !== "read" && !state.journeyAutoRead.some((x) => x.id === id)) {
+        state.journeyAutoRead.push({ id, from: before });
+      }
       applyReadStatus(id, "read"); // 여정 체크 = 읽음 처리
     } else {
       const removeIds = new Set(journey ? journey.bookIds.slice(index) : [id]);
       state.journey.doneBookIds = state.journey.doneBookIds.filter((x) => !removeIds.has(x));
+      // 진행을 되돌리면 그때 켜진 읽음도 함께 되돌린다(원장 30).
+      for (const entry of state.journeyAutoRead) {
+        if (removeIds.has(entry.id)) applyReadStatus(entry.id, entry.from);
+      }
+      state.journeyAutoRead = state.journeyAutoRead.filter((x) => !removeIds.has(x.id));
     }
   });
   updateJourneyDetail();
@@ -1706,18 +1908,18 @@ document.addEventListener("input", (e) => {
   const qa = e.target.closest("[data-answer-q]");
   if (qa) {
     const item = state.questions.find((x) => x.id === qa.dataset.answerQ);
-    if (item) { item.myAnswer = qa.value.slice(0, 10000); scheduleSave(); }
+    if (item) { item.myAnswer = qa.value.slice(0, ANSWER_MAX); scheduleSave(); }
     return;
   }
   const ja = e.target.closest("[data-answer-j]");
   if (ja) {
     const item = state.journeysDone.find((x) => x.id === ja.dataset.answerJ);
-    if (item) { item.myAnswer = ja.value.slice(0, 10000); scheduleSave(); }
+    if (item) { item.myAnswer = ja.value.slice(0, ANSWER_MAX); scheduleSave(); }
     return;
   }
   const draft = e.target.closest("[data-answer-draft]");
   if (draft && state.journey) {
-    state.journeyDraft = draft.value.slice(0, 10000);
+    state.journeyDraft = draft.value.slice(0, ANSWER_MAX);
     scheduleSave();
   }
 });

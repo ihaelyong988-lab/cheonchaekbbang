@@ -525,7 +525,25 @@ body {
 .goodbye-box .d { font-size: 13.5px; color: var(--muted); margin-top: 10px; word-break: keep-all; }
 .goodbye-box .btn { margin-top: 18px; }
 
+/* 서재를 좁힌 상태에서 되돌아갈 자리 — 지금 무엇이 걸렸는지 추적하지 않아도 되게 한다(원장 50·36) */
+#lib-reset:not(:empty) { margin-bottom: 10px; }
+.lib-reset { width: 100%; }
+
+/* 백링크가 데려온 문답집 항목. 어느 것을 보러 왔는지만 남기는 정적 강조다(원장 37) */
+.qa-item.is-landed { border-color: var(--progress-fill); box-shadow: inset 3px 0 0 var(--progress-fill); }
+
 /* 접근성 */
+/* 건너뛰기 버튼 — 평소에는 화면 밖에 두고 포커스가 닿으면 좌상단에 올라온다(원장 29) */
+.skip-link {
+  position: fixed; left: 8px; top: -140px; z-index: 40;
+  min-height: 44px; min-width: 44px; padding: 11px 14px;
+  font-family: var(--sans); font-size: 14px; font-weight: 700; line-height: 1.4;
+  color: var(--ink); background: var(--card);
+  border: 1px solid var(--outline-edge); border-radius: 10px; cursor: pointer;
+}
+.skip-link:focus { top: 8px; }
+.skip-link + .skip-link:focus { top: 60px; }
+
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
