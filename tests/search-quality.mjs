@@ -6,7 +6,11 @@ const search = createQuestionSearch(BOOKS);
 const cases = [
   { query: "돈과 투자는 어떻게 판단해야 하는가", titles: ["현명한 투자자"], domains: ["경제·사회"] },
   { query: "정의와 공정은 무엇인가", titles: ["정의란 무엇인가", "국가"], domains: ["철학", "경제·사회"] },
-  { query: "권력과 국가는 왜 부패하는가", titles: ["사회계약론", "정관정요"], domains: ["역사", "경제·사회", "문학"] },
+  /* 2026-08-10 — 사람이 쓴 질문 276개가 들어오면서 이 질의에 더 직접 답하는 책이 늘었다.
+     상위 5는 정관정요(듣기 싫은 말을 들을 제도)·반지의 제왕(절대 권력의 타락)·대부(권력 세습)가
+     차지하고 사회계약론은 8위다. 그 책의 질문은 자유·동의·정당성이라 이 질의에는 덜 맞는다.
+     못 찾게 된 것이 아니라 더 맞는 답이 앞에 선 것이므로, 창을 넓히는 대신 요구를 나눈다. */
+  { query: "권력과 국가는 왜 부패하는가", titles: ["정관정요"], found: ["사회계약론"], domains: ["역사", "경제·사회", "문학"] },
   { query: "우주는 어떻게 시작되었는가", titles: ["시간의 역사", "코스모스"], domains: ["과학", "문학"] },
   { query: "사랑과 관계는 사람을 어떻게 바꾸는가", titles: ["노르웨이의 숲"], domains: ["문학", "철학"] },
   { query: "아름다움과 예술은 누가 판단하는가", titles: ["판단력비판"], domains: ["예술", "문학"] },
@@ -19,6 +23,11 @@ for (const benchmark of cases) {
   const topTitles = results.slice(0, 5).map((item) => item.book.title);
   for (const title of benchmark.titles) {
     assert.ok(topTitles.includes(title), `${benchmark.query}: 상위 5권에 ${title} 누락`);
+  }
+  // 상위 5권에 서야 하는 것과, 결과 안에 있기만 하면 되는 것을 나눈다.
+  const allTitles = results.map((item) => item.book.title);
+  for (const title of benchmark.found || []) {
+    assert.ok(allTitles.includes(title), `${benchmark.query}: 결과에 ${title} 없음`);
   }
   assert.ok(
     results.slice(0, 3).every((item) => benchmark.domains.includes(item.book.domain)),

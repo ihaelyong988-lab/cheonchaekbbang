@@ -3,6 +3,7 @@
 // 중복 작품은 기존 id에 근거와 질문을 결합해 로컬 기록을 보존한다.
 
 import { RESEARCH_BOOKS, RESEARCH_BY_BOOK_ID } from "./research-books.js";
+import { AUTHORED_QUESTIONS } from "./authored-questions.js";
 import { CELEB_BOOKS, CELEB_EXISTING_ENRICHMENTS, principleQuoteQuestion } from "./celeb-books-2025.js";
 
 export const DOMAINS = ["철학", "역사", "과학", "문학", "경제·사회", "예술"];
@@ -402,6 +403,11 @@ const COMBINED_BOOKS = [
 function ensureQuestionDepth(book) {
   const questions = [...book.questions];
   const source = `『${book.title}』 핵심 원리 기반 자체 질문`;
+  // 사람이 쓴 질문을 먼저 채운다. 아래 생성 문장은 그것마저 없는 책의 마지막 방어다(원장 46).
+  for (const text of AUTHORED_QUESTIONS[book.id] || []) {
+    if (questions.length >= 3) break;
+    if (!questions.some((question) => question.text === text)) questions.push({ text, source });
+  }
   const candidates = [
     principleQuoteQuestion({
       statement: book.principle,

@@ -1,3 +1,4 @@
+import { AUTHORED_QUESTIONS } from "./authored-questions.js";
 // 교보문고_장바구니_상품리스트25년 11월26일.xlsx 중 `인생책` 시트만 변환한 데이터.
 // 장바구니 시트는 읽기 대상과 앱 데이터에서 제외한다. 원본 66행은 출처로 보존하고,
 // 명백한 번역·OCR 오염은 canonicalTitle/canonicalAuthor에서 바로잡는다.
@@ -183,7 +184,7 @@ export function principleQuoteQuestion({ statement, title, quoteSuffix, titleSuf
   return `『${name}』${titleSuffix}`;
 }
 
-function designedQuestions(title, principle, q1, q2, q3) {
+function designedQuestions(id, title, principle, q1, q2, q3) {
   const source = `『${title}』의 핵심 주제와 원리 기반 자체 질문`;
   const derived = principleQuoteQuestion({
     statement: principle,
@@ -191,14 +192,16 @@ function designedQuestions(title, principle, q1, q2, q3) {
     quoteSuffix: "라는 관점은 언제 성립하는가?",
     titleSuffix: "의 핵심 원리는 언제 성립하는가?",
   });
-  return [q1, q2, q3, derived].map((text) => ({ text, source }));
+  // 사람이 쓴 질문이 있으면 그것으로 4번째를 채운다. 원문 인용 파생 문장은 그마저 없을 때만 쓴다(원장 46).
+  const fourth = AUTHORED_QUESTIONS[id]?.[0] || derived;
+  return [q1, q2, q3, fourth].map((text) => ({ text, source }));
 }
 
 export const CELEB_BOOKS = BOOK_ROWS.map((row) => {
   const [id, title, author, era, domain, principle, q1, q2, q3, parentId, rootReason] = row;
   return {
     id, title, author, era, domain, tier: "branch", principle,
-    questions: designedQuestions(title, principle, q1, q2, q3),
+    questions: designedQuestions(id, title, principle, q1, q2, q3),
     roots: [parentId], root_reason: rootReason,
     celeb2025: provenance(id, title, author),
   };
