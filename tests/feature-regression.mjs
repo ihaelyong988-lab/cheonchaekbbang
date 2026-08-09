@@ -479,9 +479,38 @@ try {
   /* 묶음이 주마다 바뀌는 것만으로는 부족하다 — 주 안에서 덱이 소진되지 않으면 매번 같은 두 문항만 돈다.
      로드와 [다른 질문]을 합쳐 두 번 넘게 뽑았으므로 남은 수는 묶음 크기보다 최소 2 적어야 한다.
      (정확한 소비 횟수로 세지 않는다 — reload 직전 pagehide 확정이 회차를 하나 더 얹는다.) */
-  const weekPoolSize = Number((await readFile(path.join(ROOT, "app.js"), "utf8")).match(/const WEEK_POOL_SIZE = (\d+)/u)[1]);
-  assert.ok(weekOne.questionDeck.length <= weekPoolSize - 2,
-    `이번 주 덱이 소진되지 않습니다 — 주 안에서 같은 질문만 되돌아옵니다(남은 ${weekOne.questionDeck.length} · 묶음 ${weekPoolSize}).`);
+  /* ── 손실 계수 (2026-08-09 신설) ────────────────────────────────────────
+     새 동작만 단언하고 그 변경이 줄인 값을 안 세면, "주마다 다른 묶음"은 통과하면서
+     카탈로그의 절반이 영영 안 열리는 상태가 초록으로 지나간다. 실제로 그렇게 배포됐다
+     — 주당 14문항만 열려 1년을 다녀도 590 중 265문항이 도달 불가였다.
+     아래 두 단언은 앱이 실제로 저장한 값과 실제 화면에 뜬 문구만 본다. */
+  const { BOOKS: CATALOGUE } = await import("../data/books.js");
+  const totalQuestions = CATALOGUE.reduce((sum, book) => sum + book.questions.length, 0);
+  // 그 주에 열리는 덱은 카탈로그 전량이어야 한다. 잘라 쓰면 못 열리는 질문이 생긴다.
+  assert.ok(weekOne.questionDeck.length >= totalQuestions - 5,
+    `이번 주에 열리는 질문이 ${weekOne.questionDeck.length}문항뿐입니다(카탈로그 ${totalQuestions}) — 나머지는 이번 주 내내 나오지 않습니다.`);
+  // 덱은 소진돼야 한다. 뽑을 때마다 새로 만들면 같은 질문만 앞에서 되돌아온다.
+  assert.ok(weekOne.questionDeck.length < totalQuestions,
+    "이번 주 덱이 소진되지 않습니다 — 뽑은 질문이 덱에서 빠지지 않습니다.");
+
+  // 한 세션에서 연속으로 넘겨도 소진 전에는 같은 질문이 다시 나오지 않아야 한다.
+  const variety = await (async () => {
+    const probe = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const probePage = await probe.newPage();
+    await probePage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+    await probePage.evaluate(() => localStorage.clear());
+    await probePage.reload({ waitUntil: "networkidle" });
+    const seen = [];
+    for (let i = 0; i < 30; i += 1) {
+      seen.push(await probePage.locator(".q-text span").textContent());
+      await probePage.locator("[data-shuffle]").click();
+      await probePage.waitForTimeout(40);
+    }
+    await probe.close();
+    return { shown: seen.length, distinct: new Set(seen).size };
+  })();
+  assert.equal(variety.distinct, variety.shown,
+    `한 세션에서 ${variety.shown}회 넘기는 동안 질문이 ${variety.shown - variety.distinct}회 반복됐습니다 — 주간 갱신 전에는 반복 0이었습니다.`);
 
   console.log(JSON.stringify({
     result: "pass",

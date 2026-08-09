@@ -380,8 +380,6 @@ function cycleRead(id) {
    같은 날 열 번을 열면 열 문항이 전부 달랐다 — 화면의 접근 이름만 그렇게 적혀 있었을 뿐이다.
    이제 주차를 씨앗으로 그 주에만 열리는 묶음을 만든다. 같은 주에는 같은 묶음, 주가 바뀌면 반드시 다른 묶음이다.
    서버도 네트워크도 쓰지 않으므로 오프라인에서도 성립한다(INV-3 · INV-5). */
-const WEEK_POOL_SIZE = 14;
-
 // ISO 주 표기. 그 주의 목요일이 속한 해를 기준 연도로 삼는다(연말·연초 경계에서 주차가 갈리지 않게).
 function isoWeekKey(date = new Date()) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -401,14 +399,19 @@ function weekSeed(key) {
   return hash >>> 0;
 }
 
-// 시작점만 주차로 바꾸고 고정 간격으로 훑는다 — 앞에서 잘라 쓰면 그 구간의 분야 편중이 그대로 나온다(§9 E-020).
+/* 주차로 바뀌는 것은 "몇 개를 여느냐"가 아니라 "어떤 순서로 여느냐"다.
+   전량을 주차 씨앗으로 섞는다 — 묶음을 좁히면 그 주에 못 열리는 질문이 생기고,
+   고정 간격으로 뽑으면 도달 불가 구간까지 남는다(1년을 다녀도 590 중 265문항이 안 나왔다).
+   같은 주는 같은 순서, 주가 바뀌면 다른 순서이므로 주 1회 갱신은 그대로 성립한다(INV-11). */
 function weeklyQuestionIds(key) {
   const ids = Q_POOL.map((item) => item.id);
-  const start = weekSeed(key) % ids.length;
-  const stride = Math.max(1, Math.floor(ids.length / WEEK_POOL_SIZE));
-  const picked = [];
-  for (let i = 0; i < WEEK_POOL_SIZE; i += 1) picked.push(ids[(start + i * stride) % ids.length]);
-  return [...new Set(picked)];
+  let state = weekSeed(key);
+  for (let i = ids.length - 1; i > 0; i -= 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;   // 결정적 난수 — 주차가 같으면 결과가 같다
+    const j = state % (i + 1);
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return ids;
 }
 
 // 추첨은 메모리에만 남긴다. 저장은 [다른 질문]·pagehide·정화 확정 시점에만 일어난다(원장 3).
