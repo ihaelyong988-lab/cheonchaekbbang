@@ -469,7 +469,13 @@ function drawQuestion() {
   const week = isoWeekKey();
   if (state.questionWeek !== week) {          // 주가 바뀌면 지난주 덱을 버리고 이번 주 묶음으로 갈아탄다
     state.questionWeek = week;
-    state.questionDeck = weightByReading(weeklyQuestionIds(week));
+    /* 이번 주 순서로 다시 세우되, 지난주에 아직 안 본 질문을 앞에 둔다. 주가 바뀐다고 버리지도,
+       이미 본 질문을 앞머리에서 되풀이하지도 않는다(B3). */
+    const unseen = new Set(state.questionDeck.filter((id) => Q_BY_ID.has(id)));
+    const fresh = weightByReading(weeklyQuestionIds(week));
+    state.questionDeck = unseen.size
+      ? [...fresh.filter((id) => unseen.has(id)), ...fresh.filter((id) => !unseen.has(id))]
+      : fresh;
     /* 저장이 거부되는 기기(비공개 모드·용량 초과)는 매 방문 이 분기를 탄다. 순서는 그 주의 것을 쓰되
        시작 위치만 흔들어 첫 질문이 그 주 내내 같은 문장으로 고정되지 않게 한다(A6). */
     if (storageBroken) {
@@ -580,11 +586,19 @@ function pushView(view) {
   currentView = view;
   pointer += 1;
   history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
+  rememberTabIndex(view, pointer);
   render();
   // 탭이 바뀌는 이동은 그 화면의 최상단에서 시작한다. 오버레이 push 에는 적용하지 않는다(N-9).
   if (!view.overlay && view.tab !== previous.tab) { scrollPageTop(); clearAnnounce(); }
 }
 function top() { return currentView; }
+
+/* 탭이 마지막으로 놓인 히스토리 인덱스(세션 한정). 이미 스택에 있는 탭으로 옮길 때 새로 쌓지 않고
+   그 자리로 돌아가기 위한 것이다 — 안 그러면 탭을 오갈수록 종료까지의 뒤로가기가 길어진다(원장 47). */
+const tabHistoryIndex = new Map();
+function rememberTabIndex(view, index) {
+  if (!view.overlay) tabHistoryIndex.set(view.tab, index);
+}
 
 /* ── 오버레이 닫힘 단일 경로 (§6-4 N-5·N-6·N-7) ────── */
 let overlayDismissing = false;   // history.back() 비동기 구간 재진입 잠금
@@ -700,6 +714,7 @@ window.addEventListener("popstate", (e) => {
   }
   pointer = entry.i;
   currentView = entry.view;
+  rememberTabIndex(currentView, pointer);
   if (!entry.known) history.replaceState({ i: pointer, view: currentView }, "");   // 미지 항목 인덱스 재기입(N-3)
   render();
   scheduleTapThroughRelease();                        // 복원 렌더 다음 프레임부터 관통 가드 해제를 센다(N-7)
@@ -949,6 +964,72 @@ function onboardingHtml() {
     </div>`;
 }
 
+/* 히어로 한 장에 들어가는 값은 여기서만 계산한다. 템플릿과 부분 갱신이 각자 계산하면
+   한쪽만 고쳐졌을 때 화면과 저장이 어긋난다(R6). */
+function heroFacts() {
+  const item = heroQuestion;
+  const book = BY_ID.get(item.bookId);
+  const length = item.q.text.length;
+  const collectedHere = state.questions.filter((x) => x.bookId === item.bookId).length;
+  const bookSteps = stepsToRoot(book);
+  const stripKey = `${item.bookId}:${collectedHere}`;
+  const flip = lastStripKey !== null && lastStripKey !== stripKey ? " q-flip" : "";
+  lastStripKey = stripKey;
+  // 압축 임계는 여기가 단일 출처다. 게이트가 이 매핑을 그대로 읽어 재므로 형태를 바꾸지 않는다(§4-4).
+  const qSize = length <= 22 ? "" : length <= 29 ? " q-mid" : length <= 40 ? " q-long" : " q-xlong";
+  return {
+    item, book, flip,
+    size: qSize,
+    collected: state.questions.some((x) => x.id === item.id),
+    domain: book ? book.domain : "",
+    stats: [
+      `${state.read.length}<small>/${ALL.length}</small>`,
+      `${collectedHere}<small>/${book ? book.questions.length : 0}</small>`,
+      bookSteps === 0 ? "도달" : `${bookSteps}단계`,
+      `${state.journeysDone.length}<small>/${JOURNEYS.length}</small>`,
+    ],
+  };
+}
+
+/* 히어로는 제자리에서 고친다. 화면을 다시 그리면 방금 누른 [수집]·[다른 질문] 노드가 사라져
+   포커스가 BODY 로 떨어지고 스크린리더는 어디에 있는지 잃는다(원장 20 · §9 E-017).
+   구조가 바뀌는 경우(첫 기록으로 안내 카드가 사라지거나 최근 질문 블록이 새로 생길 때)에만
+   false 를 돌려 호출부가 전체 렌더로 넘어가게 한다. */
+function updateHero() {
+  const card = viewEl.querySelector(".q-card");
+  if (!card) return false;
+  const facts = heroFacts();
+  if (!facts.book) return false;
+  const textEl = card.querySelector(".q-text");
+  textEl.className = `q-text${facts.size}`;
+  textEl.querySelector("span").textContent = facts.item.q.text;
+  card.querySelector("[data-open-book]").dataset.openBook = facts.book.id;
+  const collectBtn = card.querySelector("[data-collect]");
+  collectBtn.dataset.collect = facts.item.id;
+  collectBtn.disabled = facts.collected;
+  collectBtn.textContent = facts.collected ? "수집됨" : "수집";
+  const stats = card.querySelectorAll(".qstat");
+  if (stats.length !== facts.stats.length) return false;
+  stats.forEach((stat, index) => {
+    stat.querySelector("b").innerHTML = facts.stats[index];
+    if (index === 1 || index === 2) stat.classList.toggle("q-flip", Boolean(facts.flip));   // 스트립 2·3번 칸만 문맥 전환
+  });
+  const lineageStat = card.querySelector('.qstat[data-tab="lineage"]');
+  if (lineageStat) lineageStat.dataset.landDomain = facts.domain;
+  return true;
+}
+
+/* 최근 질문 카드도 제자리에서 고친다. 블록이 아직 없으면(첫 수집) 구조가 바뀌므로 false 를 돌린다. */
+function updateRecentQuestion() {
+  const card = viewEl.querySelector("[data-land-question]");
+  const last = state.questions[state.questions.length - 1];
+  const text = last ? Q_BY_ID.get(last.id)?.q.text : null;
+  if (!card || !text) return false;
+  card.dataset.landQuestion = last.id;
+  card.querySelector(".card-title").textContent = text;
+  return true;
+}
+
 function renderQuestion() {
   const item = heroQuestion;
   const b = BY_ID.get(item.bookId);
@@ -987,30 +1068,23 @@ function renderQuestion() {
       </button>`;
   }).join("");
 
-  const qLen = item.q.text.length; // 2줄 고정 — 길이에 따라 글자만 압축, 박스 높이 불변
-  const qSize = qLen <= 22 ? "" : qLen <= 29 ? " q-mid" : qLen <= 40 ? " q-long" : " q-xlong";
-
-  const bookQCount = b ? b.questions.length : 0;
-  const bookQCollected = state.questions.filter((x) => x.bookId === item.bookId).length;
-  const bookSteps = stepsToRoot(b);
-  const stripKey = `${item.bookId}:${bookQCollected}`;
-  const flip = lastStripKey !== null && lastStripKey !== stripKey ? " q-flip" : "";
-  lastStripKey = stripKey;
+  const facts = heroFacts();   // 2줄 고정 — 길이에 따라 글자만 압축, 박스 높이 불변
+  const flip = facts.flip;
 
   viewEl.innerHTML = `
     <section aria-label="이번 주의 질문">
       <div class="q-card">
-        <p class="q-text${qSize}"><span>${esc(item.q.text)}</span></p>
+        <p class="q-text${facts.size}"><span>${esc(item.q.text)}</span></p>
         <div class="q-actions">
           <button class="btn btn-light" data-open-book="${b.id}">이 질문의 책</button>
           <button class="btn btn-outline" data-collect="${item.id}" ${collected ? "disabled" : ""}>${collected ? "수집됨" : "수집"}</button>
           <button class="btn-quiet" data-shuffle="1">다른 질문</button>
         </div>
         <div class="q-stats" role="group" aria-label="나의 기록">
-          <button class="qstat" data-tab="record"><b>${state.read.length}<small>/${ALL.length}</small></b><span>읽은 책</span></button>
-          <button class="qstat is-ctx${flip}" data-tab="record"><b>${bookQCollected}<small>/${bookQCount}</small></b><span>수집한 질문</span></button>
-          <button class="qstat is-ctx${flip}" data-tab="lineage" data-land-domain="${esc(b ? b.domain : "")}"><b>${bookSteps === 0 ? "도달" : `${bookSteps}단계`}</b><span>뿌리까지</span></button>
-          <button class="qstat" data-open-jlist="1"><b>${state.journeysDone.length}<small>/${JOURNEYS.length}</small></b><span>여정 완료</span></button>
+          <button class="qstat" data-tab="record"><b>${facts.stats[0]}</b><span>읽은 책</span></button>
+          <button class="qstat is-ctx${flip}" data-tab="record"><b>${facts.stats[1]}</b><span>수집한 질문</span></button>
+          <button class="qstat is-ctx${flip}" data-tab="lineage" data-land-domain="${esc(facts.domain)}"><b>${facts.stats[2]}</b><span>뿌리까지</span></button>
+          <button class="qstat" data-open-jlist="1"><b>${facts.stats[3]}</b><span>여정 완료</span></button>
         </div>
       </div>
     </section>
@@ -1766,7 +1840,19 @@ document.addEventListener("click", (e) => {
     const cur = top();
     resetTabToFirstPage(t.dataset.tab);
     // 탭이 바뀌는 이동은 pushView 가 최상단으로 내린다(N-9). 착지 대상이 있으면 그 뒤 프레임에서 덮어쓴다.
-    if (cur.tab !== t.dataset.tab) { pushView({ tab: t.dataset.tab, overlay: null }); landOnQuestion(landQuestion); return; }
+    if (cur.tab !== t.dataset.tab) {
+      /* 그 탭이 이미 스택에 있으면 새로 쌓지 않고 그 자리로 돌아간다(원장 47).
+         착지 대상을 실은 백링크는 이 경로를 쓰지 않는다 — history.go 는 비동기라 착지 시점이 어긋난다. */
+      const known = tabHistoryIndex.get(t.dataset.tab);
+      if (!landQuestion && !t.dataset.landDomain && !cur.overlay
+        && typeof known === "number" && known < pointer) {
+        history.go(known - pointer);
+        return;
+      }
+      pushView({ tab: t.dataset.tab, overlay: null });
+      landOnQuestion(landQuestion);
+      return;
+    }
     // 이미 보고 있는 탭을 다시 눌러도 그 화면의 첫 페이지 최상단으로 되돌아온다.
     if (cur.overlay) pushView({ tab: cur.tab, overlay: null });
     else render();
@@ -1828,7 +1914,9 @@ document.addEventListener("click", (e) => {
       if (!bookId) return;
       // 저장이 거부되면 수집됨 표시로 넘어가지 않는다(DI-4).
       if (!commit(() => { state.questions.push({ id: questionKey, bookId, date: today(), myAnswer: "" }); })) return;
-      render();
+      /* 첫 기록이면 안내 카드가 사라지고 최근 질문 블록이 새로 생긴다 — 구조가 바뀌는 그때만 전체 렌더다.
+         그 밖에는 제자리에서 고쳐 방금 누른 버튼을 살려 둔다(원장 20). */
+      if (!updateHero() || !updateRecentQuestion()) render();
       announce("질문을 수집했습니다. 기록 탭 문답집에서 답을 적을 수 있습니다.");
       return;
     }
@@ -1836,7 +1924,7 @@ document.addEventListener("click", (e) => {
   } else if (t.dataset.shuffle) {
     heroQuestion = drawQuestion();
     save();                                   // 추첨 확정 시점(원장 3). 실패는 save 안에서 배너·낭독으로 알린다
-    render();
+    if (!updateHero()) render();              // 히어로 한 장만 바뀐다 — 화면을 다시 그리지 않는다(원장 20)
     announce(`다음 질문으로 바꿨습니다. ${heroQuestion.q.text}`);
   } else if (t.dataset.openDomainList) {
     const domain = t.dataset.openDomainList;

@@ -131,7 +131,12 @@ assert.match(app, /t\.dataset\.tab === "question"[\s\S]{0,60}goHome\(\)/u, "홈 
 /* v1.8.0 §11-1 — 홈 스트립 문맥 전환 마커 */
 assert.match(app, /function stepsToRoot\(book\)\s*\{/u, "뿌리 거리 단일 헬퍼 stepsToRoot 누락");
 assert.equal((app.match(/function stepsToRoot\(/gu) || []).length, 1, "stepsToRoot는 단일 헬퍼여야 합니다.");
-assert.match(app, /const bookSteps = stepsToRoot\(b\)/u, "홈 스트립은 stepsToRoot로만 뿌리 거리를 계산해야 합니다.");
+/* 히어로 값은 heroFacts 한 곳에서만 계산한다 — 템플릿과 부분 갱신이 각자 계산하면 한쪽만 낡는다. */
+assert.match(app, /function heroFacts\(\)\s*\{/u, "히어로 값 단일 계산부 heroFacts 누락");
+assert.match(app, /const bookSteps = stepsToRoot\(book\)/u, "홈 스트립은 stepsToRoot로만 뿌리 거리를 계산해야 합니다.");
+assert.equal((app.match(/heroFacts\(\)/gu) || []).length, 3,
+  "히어로 값 계산은 정의 1곳 + 템플릿 1곳 + 부분 갱신 1곳이어야 합니다.");
+assert.match(app, /function updateHero\(\)\s*\{/u, "히어로 부분 갱신 함수 누락(원장 20).");
 assert.match(app, /class="qstat is-ctx\$\{flip\}" data-tab="record"[\s\S]{0,120}<span>수집한 질문<\/span>/u,
   "스트립 2번 칸은 문맥 전환·기록 탭 링크·라벨 `수집한 질문`을 유지해야 합니다.");
 assert.match(app, /class="qstat is-ctx\$\{flip\}" data-tab="lineage"[\s\S]{0,140}<span>뿌리까지<\/span>/u,
