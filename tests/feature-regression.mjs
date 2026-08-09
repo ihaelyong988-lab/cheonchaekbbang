@@ -294,9 +294,208 @@ try {
   assert.deepEqual(drift.errors, []);
   await drift.context.close();
 
+  /* ── G-18 (2026-08-09 방문자 실사) ─────────────────────────────────────
+     소스에 처방이 적혀 있다는 것과 화면에서 그렇게 동작한다는 것은 다른 사실이다(§9 E-012).
+     아래는 전부 방문자 조작을 그대로 재현해 결과를 센다. */
+
+  /* N-12 — 시트를 연 채 여러 칸을 한 번에 뒤로 가면 앱이 갇혔다.
+     팝업이 뜨고, 그 뒤 어떤 닫기 조작도 다시 팝업으로 되돌아와 새로고침 말고는 나갈 길이 없었다. */
+  const trap = await freshPage();
+  await trap.page.locator("#view [data-open-book]").first().click();
+  await trap.page.waitForTimeout(200);
+  assert.equal(await trap.page.locator(".sheet").count(), 1, "책 상세 시트가 열리지 않아 재현 조건이 서지 않습니다.");
+  await trap.page.evaluate(() => history.go(-2));        // 뒤로 제스처 연타 = 두 칸 점프
+  await trap.page.waitForTimeout(450);
+  assert.equal(await trap.page.locator("#exit-dialog").isVisible(), true, "센티널에 닿았는데 종료 팝업이 뜨지 않았습니다.");
+  await trap.page.keyboard.press("Escape");
+  await trap.page.waitForTimeout(300);
+  assert.equal(await trap.page.locator("#exit-dialog").isVisible(), false, "ESC 로 종료 팝업이 닫히지 않았습니다.");
+  assert.equal(await trap.page.locator(".sheet").count(), 0,
+    "히스토리는 홈인데 시트가 남아 있습니다 — 이 어긋남이 탈출 경로를 없앱니다(N-12).");
+  assert.equal(await trap.page.evaluate(() => document.querySelector(".tabbar").inert), false,
+    "배경 잠금이 걷히지 않아 하단 탭을 누를 수 없습니다(N-12).");
+  await trap.page.locator('.tab[data-tab="library"]').click();
+  await trap.page.waitForTimeout(250);
+  assert.equal(await trap.page.locator("#lib-list").count(), 1, "팝업을 닫은 뒤 다른 탭으로 나가지 못합니다 — 막다른 길입니다.");
+  assert.deepEqual(trap.errors, []);
+  await trap.context.close();
+
+  /* 원장 30 — 여정 체크가 켠 읽음은 체크를 되돌리면 함께 되돌아온다. */
+  const revert = await freshPage();
+  await revert.page.locator("#view [data-open-jlist]").first().click();
+  await revert.page.waitForTimeout(200);
+  await revert.page.locator("[data-start-journey]").first().click();
+  await revert.page.waitForTimeout(250);
+  const journeyBookIds = await revert.page.locator("[data-jcheck]").evaluateAll((els) => els.map((el) => el.dataset.jcheck));
+  await revert.page.locator("[data-jcheck]").nth(0).check();
+  await revert.page.waitForTimeout(150);
+  await revert.page.locator("[data-jcheck]").nth(1).check();
+  await revert.page.waitForTimeout(150);
+  const savedRead = () => revert.page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).read);
+  assert.deepEqual(await savedRead(), journeyBookIds.slice(0, 2), "여정 체크가 읽음을 켜지 않았습니다.");
+  await revert.page.locator("[data-jcheck]").nth(1).uncheck();
+  await revert.page.waitForTimeout(250);
+  assert.deepEqual(await savedRead(), journeyBookIds.slice(0, 1),
+    "체크를 되돌렸는데 읽음이 남았습니다 — 방문자의 읽은 책 수가 조작한 적 없는 값으로 늘어납니다(원장 30).");
+  assert.deepEqual(revert.errors, []);
+  await revert.context.close();
+
+  /* 원장 50 — 홈 게이지 이동은 저장된 서재 필터를 덮어쓰지 않고, 좁혀진 화면에는 되돌림 컨트롤이 있다. */
+  const gauge = await freshPage();
+  await gauge.page.locator('.tab[data-tab="library"]').click();
+  await gauge.page.waitForTimeout(200);
+  await gauge.page.locator('[data-libdomain="문학"]').click();
+  await gauge.page.waitForTimeout(200);
+  const prefsBefore = await gauge.page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).prefs);
+  await gauge.page.locator('.tab[data-tab="question"]').click();
+  await gauge.page.waitForTimeout(350);
+  await gauge.page.locator("[data-open-domain-list]").first().click();
+  await gauge.page.waitForTimeout(350);
+  assert.deepEqual(await gauge.page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).prefs), prefsBefore,
+    "홈 게이지 이동이 방문자가 골라 저장한 서재 필터를 덮어썼습니다(원장 50).");
+  assert.equal(await gauge.page.locator("[data-lib-reset]").isVisible(), true,
+    "좁혀진 서재에 전체 보기로 되돌리는 컨트롤이 없습니다(원장 50 · 36).");
+  await gauge.page.locator("[data-lib-reset]").click();
+  await gauge.page.waitForTimeout(250);
+  assert.equal(await gauge.page.locator(".library-summary").textContent(), "전체 서재 · 175권", "되돌림이 전체 서재로 복원하지 않았습니다.");
+  assert.equal(await gauge.page.locator("[data-lib-reset]").count(), 0, "되돌린 뒤에도 되돌림 컨트롤이 남아 있습니다.");
+  assert.deepEqual(gauge.errors, []);
+  await gauge.context.close();
+
+  /* 원장 20 · 29 — 필터·분야 칩을 눌러도 눌린 컨트롤이 살아 있고, 건너뛰기 버튼이 하단 탭으로 데려간다. */
+  const keyboard = await freshPage();
+  await keyboard.page.locator('.tab[data-tab="library"]').click();
+  await keyboard.page.waitForTimeout(200);
+  await keyboard.page.locator('[data-libtier="뿌리"]').click();
+  await keyboard.page.waitForTimeout(200);
+  assert.equal(await keyboard.page.evaluate(() => document.activeElement?.dataset?.libtier), "뿌리",
+    "계단 필터를 누른 뒤 포커스가 사라졌습니다 — 키보드 사용자는 순회를 처음부터 다시 합니다(원장 20).");
+  await keyboard.page.locator('.tab[data-tab="lineage"]').click();
+  await keyboard.page.waitForTimeout(200);
+  await keyboard.page.locator('[data-domain="과학"]').click();
+  await keyboard.page.waitForTimeout(200);
+  assert.equal(await keyboard.page.evaluate(() => document.activeElement?.dataset?.domain), "과학",
+    "계보 분야 칩을 누른 뒤 포커스가 사라졌습니다(원장 20).");
+  await keyboard.page.locator('[data-skip-to="tabbar"]').focus();
+  await keyboard.page.keyboard.press("Enter");
+  await keyboard.page.waitForTimeout(200);
+  assert.equal(await keyboard.page.evaluate(() => document.activeElement?.classList?.contains("tab")), true,
+    "건너뛰기 버튼이 하단 탭으로 포커스를 옮기지 않았습니다 — 서재에서는 98번을 눌러야 닿습니다(원장 29).");
+  assert.deepEqual(keyboard.errors, []);
+  await keyboard.context.close();
+
+  /* 원장 34 · 37 · 49 · 52 — 백링크가 대상을 실어 나르고, 답칸에 상한과 접근 이름이 붙는다. */
+  const land = await freshPage();
+  await land.page.locator("#view [data-collect]").first().click();
+  await land.page.waitForTimeout(200);
+  await land.page.locator("[data-shuffle]").click();
+  await land.page.waitForTimeout(200);
+  await land.page.locator("#view [data-collect]").first().click();
+  await land.page.waitForTimeout(200);
+  assert.ok(await land.page.locator('.qstat[data-tab="lineage"]').getAttribute("data-land-domain"),
+    "홈 스트립 [뿌리까지] 가 착지 분야를 싣지 않았습니다 — 지금 보는 책과 다른 계보가 열립니다(원장 34).");
+  await land.page.locator("[data-land-question]").click();
+  await land.page.waitForTimeout(450);
+  const landed = await land.page.evaluate(() => {
+    const el = document.querySelector(".qa-item.is-landed");
+    if (!el) return null;
+    return { top: el.getBoundingClientRect().top, viewport: window.innerHeight };
+  });
+  assert.ok(landed, "최근 질문 백링크가 대상 문답집 항목을 가리키지 않았습니다(원장 37).");
+  assert.ok(landed.top >= 0 && landed.top < landed.viewport,
+    `대상 항목이 화면 밖에 있습니다(top=${Math.round(landed.top)}px · 뷰포트 ${landed.viewport}px).`);
+  const answerAttrs = await land.page.locator("#view [data-answer-q]").first()
+    .evaluate((el) => ({ max: el.maxLength, labelledBy: el.getAttribute("aria-labelledby") }));
+  assert.equal(answerAttrs.max, 10000, "문답집 답칸에 상한이 없어 초과분이 말없이 잘립니다(원장 49).");
+  assert.ok(answerAttrs.labelledBy && (await land.page.locator(`#${answerAttrs.labelledBy}`).count()) === 1,
+    "문답집 답칸의 접근 이름이 질문 문단에 연결되지 않았습니다(원장 52).");
+  // 백링크 착지는 이동이지 설정 변경이 아니다 — 저장된 관심 분야를 바꾸면 안 된다.
+  await land.page.locator('.tab[data-tab="question"]').click();   // 홈 스트립이 있는 화면으로 되돌아간다
+  await land.page.waitForTimeout(400);
+  await land.page.evaluate(() => {
+    const strip = document.querySelector('.qstat[data-tab="lineage"]');
+    strip.dataset.landDomain = "예술";
+    strip.click();
+  });
+  await land.page.waitForTimeout(400);
+  assert.equal(await land.page.locator('.chip[data-domain="예술"]').getAttribute("aria-pressed"), "true",
+    "백링크가 실어 온 분야로 착지하지 않았습니다(원장 34).");
+  assert.notEqual(await land.page.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).prefs.lineageDomain), "예술",
+    "백링크 착지가 저장된 관심 분야를 덮어썼습니다(N-11).");
+  assert.deepEqual(land.errors, []);
+  await land.context.close();
+
+  /* 원장 65 — 여정을 전부 마치면 목록이 그 사실을 인정한다. 수치는 홈 스트립이 원천이라 문구에 넣지 않는다(R6). */
+  const finished = await freshPage();
+  const journeyIds = await finished.page.evaluate(async () => (await import("./data/books.js")).JOURNEYS.map((j) => j.id));
+  await finished.page.evaluate((ids) => {
+    localStorage.setItem("cheonchaek.v1", JSON.stringify({
+      journeysDone: ids.map((id) => ({ id, date: "2026-08-09", myAnswer: "" })),
+    }));
+  }, journeyIds);
+  await finished.page.reload({ waitUntil: "networkidle" });
+  await finished.page.locator("#view [data-open-jlist]").first().click();
+  await finished.page.waitForTimeout(300);
+  const completionText = await finished.page.locator(".sheet .notice").first().textContent();
+  assert.match(completionText, /모든 갈래의 질문을 지나 왔습니다/u, "여정을 전부 마쳤는데 완주 인정이 없습니다(원장 65).");
+  assert.doesNotMatch(completionText, /\d/u, "완주 문구가 수치를 다시 표시합니다 — 원천은 홈 스트립입니다(R6).");
+  assert.deepEqual(finished.errors, []);
+  await finished.context.close();
+
+  /* 주인님 지시(2026-08-09) — 질문은 최소 주 1회 갱신된다.
+     같은 주에는 같은 묶음이 열리고, 주가 바뀌면 반드시 다른 묶음이 열려야 한다. */
+  async function weeklyState(fixedIso) {
+    const weekContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await weekContext.addInitScript((iso) => {
+      const RealDate = Date;
+      const fixed = new RealDate(iso).getTime();
+      const FixedDate = class extends RealDate {
+        constructor(...args) { super(...(args.length ? args : [fixed])); }
+        static now() { return fixed; }
+      };
+      Object.defineProperty(globalThis, "Date", { value: FixedDate, writable: true, configurable: true });
+    }, fixedIso);
+    const weekPage = await weekContext.newPage();
+    await weekPage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+    await weekPage.evaluate(() => localStorage.clear());
+    await weekPage.reload({ waitUntil: "networkidle" });
+    await weekPage.locator("[data-shuffle]").click();      // 추첨을 저장으로 확정시킨다
+    await weekPage.waitForTimeout(200);
+    const saved = await weekPage.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")));
+    await weekContext.close();
+    return saved;
+  }
+  const weekOne = await weeklyState("2026-08-10T09:00:00Z");
+  const weekOneAgain = await weeklyState("2026-08-12T21:00:00Z");   // 같은 주 다른 날
+  const weekTwo = await weeklyState("2026-08-18T09:00:00Z");        // 다음 주
+  const openedSet = (saved) => [...new Set([...saved.questionDeck, saved.lastHeroQuestionId])].sort();
+  assert.match(weekOne.questionWeek, /^\d{4}-W\d{2}$/u, "이번 주 표기가 저장되지 않았습니다.");
+  assert.equal(weekOne.questionWeek, weekOneAgain.questionWeek, "같은 주인데 주차 값이 갈렸습니다.");
+  assert.notEqual(weekOne.questionWeek, weekTwo.questionWeek, "주가 바뀌었는데 주차 값이 그대로입니다.");
+  assert.deepEqual(openedSet(weekOne), openedSet(weekOneAgain), "같은 주에 서로 다른 질문 묶음이 열렸습니다.");
+  assert.notDeepEqual(openedSet(weekOne), openedSet(weekTwo),
+    "주가 바뀌었는데 질문 묶음이 그대로입니다 — 최소 주 1회 갱신이 성립하지 않습니다.");
+  assert.notEqual(weekOne.lastHeroQuestionId, weekTwo.lastHeroQuestionId, "주가 바뀌었는데 첫 질문이 같습니다.");
+  /* 묶음이 주마다 바뀌는 것만으로는 부족하다 — 주 안에서 덱이 소진되지 않으면 매번 같은 두 문항만 돈다.
+     로드와 [다른 질문]을 합쳐 두 번 넘게 뽑았으므로 남은 수는 묶음 크기보다 최소 2 적어야 한다.
+     (정확한 소비 횟수로 세지 않는다 — reload 직전 pagehide 확정이 회차를 하나 더 얹는다.) */
+  const weekPoolSize = Number((await readFile(path.join(ROOT, "app.js"), "utf8")).match(/const WEEK_POOL_SIZE = (\d+)/u)[1]);
+  assert.ok(weekOne.questionDeck.length <= weekPoolSize - 2,
+    `이번 주 덱이 소진되지 않습니다 — 주 안에서 같은 질문만 되돌아옵니다(남은 ${weekOne.questionDeck.length} · 묶음 ${weekPoolSize}).`);
+
   console.log(JSON.stringify({
     result: "pass",
     libraryPaging: [80, 160, 175],
+    historyDesyncEscape: true,
+    journeyReadRevert: true,
+    gaugeKeepsSavedFilter: true,
+    libraryResetControl: true,
+    filterFocusKept: true,
+    skipLinkReachesTabbar: true,
+    backlinkPayload: true,
+    answerLimitAndLabel: true,
+    journeyCompletionNotice: true,
+    weeklyQuestionRotation: [weekOne.questionWeek, weekTwo.questionWeek],
     modalAccessibility: true,
     rootArrivalSingleIncrement: true,
     readStateCycle: true,

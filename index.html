@@ -24,6 +24,10 @@
 <body>
   <div class="app">
     <header class="topbar">
+      <!-- 서재는 첫 페이지가 80장이라 키보드로 하단 탭까지 98번을 눌러야 닿는다(원장 29).
+           해시를 바꾸지 않도록 앵커 대신 버튼을 쓰고, 상단바 안에 두어 오버레이·종료 팝업의 배경 잠금을 함께 받는다. -->
+      <button class="skip-link" data-skip-to="view">본문 바로가기</button>
+      <button class="skip-link" data-skip-to="tabbar">화면 이동 탭 바로가기</button>
       <div class="brand-group">
         <h1 class="brand"><button class="brand-btn" data-home="1" aria-label="첫 화면으로">천책빵</button></h1>
         <p class="brand-sub">뿌리를 찾는 서재</p>
