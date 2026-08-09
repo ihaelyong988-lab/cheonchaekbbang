@@ -166,6 +166,23 @@ const PROBES = {
     return { ok: new Set(seen).size, detail: `30회 중 distinct ${new Set(seen).size}` };
   },
 
+  /* 원장 47 — 탭을 오갈수록 종료까지의 뒤로가기가 길어지면 안 된다.
+     적을수록 좋은 값이라 음수로 돌려 "클수록 좋다"는 비교 규약에 맞춘다. */
+  async backPressesToExit(page) {
+    for (const tab of ["lineage", "library", "record", "lineage", "library", "record"]) {
+      await page.locator(`.tab[data-tab="${tab}"]`).click();
+      await page.waitForTimeout(160);
+    }
+    let presses = 0;
+    while (presses < 20) {
+      await page.evaluate(() => history.back());
+      await page.waitForTimeout(180);
+      presses += 1;
+      if (await page.locator("#exit-dialog").isVisible()) break;
+    }
+    return { ok: -presses, detail: `교차 6회 뒤 종료까지 뒤로 ${presses}회` };
+  },
+
   // 탭 전환 3값(히스토리·주소·렌더)이 어긋나지 않는가
   async tabTripleMatch(page) {
     let matched = 0;
