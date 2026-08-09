@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { principleQuoteQuestion } from "../data/celeb-books-2025.js";
 import { readFile } from "node:fs/promises";
 import { BOOKS, DOMAIN_TARGETS, DOMAINS, JOURNEYS } from "../data/books.js";
 import {
@@ -120,7 +121,23 @@ for (const book of BOOKS) {
     assert.equal(statement.charAt(core.length), " ", `${book.id}: 인용부가 어절 중간에서 잘렸습니다 — ${question.text}`);
   }
 }
-assert.ok(quotedPrefixCount > 0, "원문 접두 인용 질문이 사라졌습니다 — G-10 판정 대상이 0건입니다.");
+/* 2026-08-10 — 사람이 쓴 질문이 276개 들어오면서 데이터에는 접두 인용 질문이 0건이 됐다.
+   그래도 생성 경로는 AUTHORED_QUESTIONS 에 없는 새 책의 마지막 방어로 남아 있으므로,
+   판정 대상을 데이터에서 함수로 옮긴다 — 데이터가 비었다고 규칙 검사를 그만두면 다음 책에서 재발한다. */
+{
+  const generated = principleQuoteQuestion({
+    statement: "품위라는 명분으로 감정을 미룬 선택은 뒤늦게 후회로 돌아온다",
+    title: "긴 제목 대체 확인용 책",
+    quoteSuffix: "라는 관점은 언제 성립하는가?",
+    titleSuffix: "의 핵심 원리는 언제 성립하는가?",
+  });
+  const quoted = /^“([^”]*)”/u.exec(generated);
+  assert.ok(quoted, "생성 경로가 인용 질문을 만들지 못했습니다.");
+  assert.ok(quoted[1].endsWith("…"), "원문보다 짧은 접두 인용은 말줄임표로 닫아야 합니다(원장 2).");
+  assert.ok(!/\S…$/u.test(quoted[1].replace(/…$/u, "")) || !quoted[1].slice(0, -1).endsWith(" "),
+    "절단 지점이 어절 경계가 아닙니다.");
+  assert.ok([...generated].length <= 44, "생성 질문이 홈 2줄 기준을 넘습니다.");
+}
 
 console.log(JSON.stringify({
   result: "pass",

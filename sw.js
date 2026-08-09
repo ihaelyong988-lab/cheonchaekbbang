@@ -1,11 +1,12 @@
 // 천책빵 Service Worker — 전 자산 캐시, 완전 오프라인 동작 (PRD §6)
-const CACHE = "ccb-v1.13.1";
+const CACHE = "ccb-v1.14.0";
 const ASSETS = [
   "./",
   "./index.html",
   "./app.css",
   "./app.js",
   "./data/books.js",
+  "./data/authored-questions.js",
   "./data/research-books.js",
   "./data/celeb-books-2025.js",
   "./lib/search.js",
