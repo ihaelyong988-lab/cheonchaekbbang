@@ -348,6 +348,20 @@ window.addEventListener("pagehide", () => {
   answerSaveTimer = 0;
   save();
 });
+/* 주차는 drawQuestion 안에서만 읽히고 모듈 로드는 한 번뿐이라, 열어 둔 화면은 주 경계를 넘겨도
+   지난주 문장을 그대로 들고 있었다 — 홈 화면에 설치한 PWA 를 며칠 뒤 열면 갱신이 없다(Q1-01).
+   복귀 시점(탭 전환 · bfcache 복원)에 주차만 비교해 바뀐 주에만 다시 뽑는다. 같은 주 복귀에는
+   문장이 흔들리지 않고, 추첨은 메모리에만 남긴다 — 확정은 pagehide·[다른 질문]이 맡는다(원장 3).
+   시계 비교뿐이라 서버도 타이머도 쓰지 않는다(INV-3 · INV-5). */
+function redrawIfWeekChanged() {
+  if (document.visibilityState !== "visible") return;
+  if (isoWeekKey() === state.questionWeek) return;
+  heroQuestion = drawQuestion();
+  if (!updateHero()) render();               // 히어로 한 장만 바뀐다 — 구조가 바뀔 때만 전체 렌더다(원장 20)
+  announce(`이번 주의 질문이 새로 열렸습니다. ${heroQuestion.q.text}`);
+}
+window.addEventListener("visibilitychange", redrawIfWeekChanged);
+window.addEventListener("pageshow", redrawIfWeekChanged);
 // 타 탭 변경을 상태에 반영한 뒤 렌더한다. 보고 있는 질문과 쓰던 초안은 타 탭 값으로 바꾸지 않는다.
 window.addEventListener("storage", (event) => {
   if (event.key !== null && event.key !== STORE_KEY) return;
@@ -434,8 +448,15 @@ function weeklyQuestionIds(key) {
   const ids = Q_POOL.map((item) => item.id);
   let state = weekSeed(key);
   for (let i = ids.length - 1; i > 0; i -= 1) {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;   // 결정적 난수 — 주차가 같으면 결과가 같다
-    const j = state % (i + 1);
+    /* 전에는 LCG 원시값을 그대로 나머지에 썼다. 2^32 모듈러 LCG 의 하위 k 비트는 주기가 2^k 라
+       마지막 swap 의 j 가 씨앗 홀짝만으로 정해졌고(100년치 5,200주 전수 일치), 그 결과 1번 자리가
+       카탈로그 앞머리(논어)로 2.98% 를 차지했고 10문항은 100년치를 돌려도 첫 질문이 되지 못했다.
+       이제 씨앗을 고정 간격으로 밀고 출력을 상·하위 비트까지 섞어 낸다(mulberry32) — 씨앗은
+       여전히 weekSeed(key) 하나뿐이라 같은 주는 같은 순서다(Q1-02 · INV-11). */
+    state = (state + 0x6D2B79F5) >>> 0;                      // 결정적 난수 — 주차가 같으면 결과가 같다
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    const j = ((mixed ^ (mixed >>> 14)) >>> 0) % (i + 1);
     [ids[i], ids[j]] = [ids[j], ids[i]];
   }
   return ids;
@@ -443,7 +464,7 @@ function weeklyQuestionIds(key) {
 
 /* 읽은 이력이 있으면 그 분야 질문을 앞쪽에 더 자주 놓는다. 밀도 상한은 자연 비율의 2배이고
    한 문항도 버리지 않는다 — 좁히면 그 주에 못 열리는 질문이 생긴다(원장 32 · 손실 계수). */
-function weightByReading(ids) {
+function weightByReading(ids, key) {
   const domain = mostReadDomain();
   if (!domain) return ids;
   const near = [], far = [];
@@ -454,7 +475,11 @@ function weightByReading(ids) {
   if (!near.length || !far.length) return ids;
   const rate = Math.min((2 * near.length) / ids.length, 1);
   const out = [];
-  let nearIndex = 0, farIndex = 0, quota = 0;
+  /* 몫을 0 에서 시작하면 첫 near 는 1/rate 번째 칸에서야 나온다 — 1번 자리가 선호 분야를 100% 배제했고
+     역사·예술은 앞 5칸에도 0개였다(rate×5 = 0.90·0.95 가 목표인데). 시작 위상을 주차 씨앗으로 0~1 에
+     흩어 첫 칸부터 rate 만큼 섞이게 한다. 같은 주는 같은 위상이라 순서는 그대로 결정적이고(INV-11),
+     near 는 여전히 rate 를 넘겨 나오지 못하며 한 문항도 버리지 않는다(원장 32 · Q2-01). */
+  let nearIndex = 0, farIndex = 0, quota = weekSeed(`${key}:near`) / 4294967296;
   while (nearIndex < near.length || farIndex < far.length) {
     quota += rate;
     if (quota >= 1 && nearIndex < near.length) { out.push(near[nearIndex]); nearIndex += 1; quota -= 1; }
@@ -472,7 +497,7 @@ function drawQuestion() {
     /* 이번 주 순서로 다시 세우되, 지난주에 아직 안 본 질문을 앞에 둔다. 주가 바뀐다고 버리지도,
        이미 본 질문을 앞머리에서 되풀이하지도 않는다(B3). */
     const unseen = new Set(state.questionDeck.filter((id) => Q_BY_ID.has(id)));
-    const fresh = weightByReading(weeklyQuestionIds(week));
+    const fresh = weightByReading(weeklyQuestionIds(week), week);   // 분야 가중의 시작 위상도 그 주의 씨앗에서 나온다
     state.questionDeck = unseen.size
       ? [...fresh.filter((id) => unseen.has(id)), ...fresh.filter((id) => !unseen.has(id))]
       : fresh;
