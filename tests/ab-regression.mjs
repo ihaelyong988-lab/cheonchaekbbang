@@ -19,11 +19,21 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_REF = process.argv[2] || process.env.AB_BASE_REF || "origin/main";
-// 기준에서 꺼내야 하는 것은 "화면 동작을 만드는 파일"뿐이다. 아이콘·테스트는 대조에 영향이 없다.
-const SOURCES = [
-  "index.html", "app.js", "app.css", "sw.js", "manifest.webmanifest",
-  "lib/search.js", "data/books.js", "data/celeb-books-2025.js", "data/research-books.js",
-];
+/* 기준에서 꺼내야 하는 것은 "화면 동작을 만드는 파일"뿐이다. 아이콘·테스트는 대조에 영향이 없다.
+   목록을 손으로 적으면 새 모듈이 늘 때 조용히 빠진다 — 실제로 `data/authored-questions.js` 가
+   빠져 기준 쪽이 부팅하지 못한 채 이 게이트가 죽어 있었다(§9 E-028). 그래서 ref 에서 직접 센다. */
+const EXCLUDED_DIR = /^(tests|docs|scripts|\.github|graphify-out|node_modules)\//u;
+const EXCLUDED_FILE = /^(package(-lock)?\.json|pnpm-lock\.yaml|\.gitignore|[^/]*\.md)$/u;
+function sourcesAt(ref) {
+  // -z 로 받는다. 기본 출력은 한글 경로를 따옴표+8진 이스케이프로 감싸서 제외 패턴이 통째로 빗나간다.
+  const files = execFileSync("git", ["ls-tree", "-r", "-z", "--name-only", ref], { cwd: ROOT, encoding: "utf8" })
+    .split("\0").map((line) => line.trim()).filter(Boolean)
+    .filter((file) => !EXCLUDED_DIR.test(file) && !EXCLUDED_FILE.test(file));
+  if (!files.includes("app.js") || !files.includes("index.html")) {
+    throw new Error(`기준 ${ref} 에서 앱 소스를 세지 못했다 — 측정 실패`);
+  }
+  return files;
+}
 const MIME = {
   ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
@@ -38,7 +48,7 @@ function gitShow(ref, file) {
    실제로 그 오염 때문에 1차 측정이 정반대 결과를 냈다(§9 E-024). */
 function materializeBase(ref) {
   const dir = mkdtempSync(path.join(tmpdir(), "ccb-base-"));
-  for (const file of SOURCES) {
+  for (const file of sourcesAt(ref)) {
     const target = path.join(dir, file);
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, gitShow(ref, file));
@@ -216,10 +226,17 @@ try {
   for (const [name, probe] of Object.entries(PROBES)) {
     const runs = {};
     for (const [side, port] of [["base", baseServer.port], ["head", headServer.port]]) {
-      const { context, page } = await coldPage(browser, port);
-      try { runs[side] = await probe(page); }
-      catch (error) { runs[side] = { ok: false, detail: `측정 실패: ${String(error.message).slice(0, 120)}` }; }
-      await context.close();
+      /* coldPage 를 try 밖에 두면 기준 쪽이 부팅하지 못할 때 게이트가 통째로 크래시하고,
+         그 실패가 "퇴행 없음"과 구분되지 않는다. 부팅 실패도 측정 실패로 남긴다(§9 E-028). */
+      let session = null;
+      try {
+        session = await coldPage(browser, port);
+        runs[side] = await probe(session.page);
+      } catch (error) {
+        runs[side] = { ok: false, detail: `측정 실패: ${String(error.message).slice(0, 120)}` };
+      } finally {
+        if (session) await session.context.close();
+      }
     }
     results[name] = runs;
   }
@@ -232,7 +249,7 @@ try {
 
 const regressions = Object.entries(results).filter(([, runs]) => isRegression(runs.base, runs.head));
 const measurementFailures = Object.entries(results)
-  .filter(([, runs]) => String(runs.base.detail).startsWith("측정 실패"));
+  .filter(([, runs]) => ["base", "head"].some((side) => String(runs[side]?.detail).startsWith("측정 실패")));
 
 console.log(JSON.stringify({
   result: regressions.length === 0 && measurementFailures.length === 0 ? "pass" : "fail",

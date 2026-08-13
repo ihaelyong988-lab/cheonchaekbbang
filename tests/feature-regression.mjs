@@ -512,6 +512,50 @@ try {
   assert.equal(variety.distinct, variety.shown,
     `한 세션에서 ${variety.shown}회 넘기는 동안 질문이 ${variety.shown - variety.distinct}회 반복됐습니다 — 주간 갱신 전에는 반복 0이었습니다.`);
 
+  /* Q1-01 — 주차는 drawQuestion 안에서만 읽혀서, 열어 둔 화면과 홈에 설치한 PWA 는 주 경계를
+     넘겨도 지난주 문장을 그대로 들고 있었다. 위의 weeklyState 는 로드 시각을 고정하는 방식이라
+     "연 채로 주가 바뀌는" 상황을 만들지 못한다 — 그래서 시계를 전역에 두고 페이지를 연 채 민다. */
+  const weekBoundary = await (async () => {
+    const boundaryContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await boundaryContext.addInitScript(() => {
+      const RealDate = Date;
+      globalThis.__fakeNow = new RealDate("2026-08-10T09:00:00Z").getTime();
+      const MovableDate = class extends RealDate {
+        constructor(...args) { super(...(args.length ? args : [globalThis.__fakeNow])); }
+        static now() { return globalThis.__fakeNow; }
+      };
+      Object.defineProperty(globalThis, "Date", { value: MovableDate, writable: true, configurable: true });
+    });
+    const boundaryPage = await boundaryContext.newPage();
+    await boundaryPage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+    await boundaryPage.evaluate(() => localStorage.clear());
+    await boundaryPage.reload({ waitUntil: "networkidle" });
+    const opened = await boundaryPage.locator(".q-text span").textContent();
+    // 같은 주 안의 복귀 — 문장이 흔들리면 안 된다.
+    await boundaryPage.evaluate(() => {
+      globalThis.__fakeNow += 2 * 86400000;
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+    });
+    await boundaryPage.waitForTimeout(200);
+    const sameWeek = await boundaryPage.locator(".q-text span").textContent();
+    // 주 경계를 넘긴 복귀 — 새 주의 질문이 열려야 한다.
+    await boundaryPage.evaluate(() => {
+      globalThis.__fakeNow += 7 * 86400000;
+      document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+    });
+    await boundaryPage.waitForTimeout(300);
+    const nextWeek = await boundaryPage.locator(".q-text span").textContent();
+    const status = await boundaryPage.locator("#app-status").textContent();
+    await boundaryContext.close();
+    return { opened, sameWeek, nextWeek, status };
+  })();
+  assert.equal(weekBoundary.sameWeek, weekBoundary.opened,
+    "같은 주에 화면으로 돌아왔는데 질문이 바뀌었습니다 — 탭을 오갈 때마다 문장이 흔들립니다.");
+  assert.notEqual(weekBoundary.nextWeek, weekBoundary.opened,
+    "주 경계를 넘겨 화면으로 돌아왔는데 지난주 질문 그대로입니다(Q1-01) — 열어 둔 화면과 설치형 PWA 가 갱신되지 않습니다.");
+  assert.match(weekBoundary.status, /이번 주의 질문이 새로 열렸습니다/u,
+    "주 경계 재추첨이 화면만 바꾸고 낭독하지 않았습니다.");
+
   console.log(JSON.stringify({
     result: "pass",
     libraryPaging: [80, 160, 175],
@@ -525,6 +569,7 @@ try {
     answerLimitAndLabel: true,
     journeyCompletionNotice: true,
     weeklyQuestionRotation: [weekOne.questionWeek, weekTwo.questionWeek],
+    weekBoundaryRedraw: true,
     modalAccessibility: true,
     rootArrivalSingleIncrement: true,
     readStateCycle: true,
