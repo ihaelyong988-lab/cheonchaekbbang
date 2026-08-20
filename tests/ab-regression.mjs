@@ -193,6 +193,99 @@ const PROBES = {
     return { ok: -presses, detail: `교차 6회 뒤 종료까지 뒤로 ${presses}회` };
   },
 
+  /* 저장이 거부되는 기기(비공개 모드·용량 초과)에서도 앱이 열리고 첫 질문이 고정되지 않는가.
+     저장 실패는 게이트가 한 번도 재지 않던 실사용 상태다(§9 E-016). */
+  async survivesStorageDenial(page, { browser, port }) {
+    const denied = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    await denied.addInitScript(() => {
+      const blocked = {
+        getItem: () => null,
+        setItem() { throw new DOMException("QuotaExceededError", "QuotaExceededError"); },
+        removeItem: () => undefined,
+        clear: () => undefined,
+        key: () => null,
+        get length() { return 0; },
+      };
+      Object.defineProperty(window, "localStorage", { configurable: true, get: () => blocked });
+    });
+    const shown = [];
+    for (let visit = 0; visit < 3; visit += 1) {
+      const probePage = await denied.newPage();
+      await probePage.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      shown.push(await probePage.locator(".q-text span").count()
+        ? await probePage.locator(".q-text span").textContent() : null);
+      await probePage.close();
+    }
+    await denied.close();
+    const rendered = shown.filter(Boolean).length;
+    const distinct = new Set(shown.filter(Boolean)).size;
+    // 열리는 것과 첫 질문이 갈리는 것을 한 값으로 합친다 — 둘 다 클수록 좋다.
+    return { ok: rendered + distinct, detail: `열림 ${rendered}/3 · 첫 질문 distinct ${distinct}` };
+  },
+
+  // 오프라인에서 재로드해도 열리는가(INV-5). 서비스워커 캐시가 실제로 자산을 덮는지 본다.
+  async worksOffline(page) {
+    await page.waitForTimeout(1500);                      // 서비스워커 설치·프리캐시 대기
+    const controlled = await page.evaluate(() => Boolean(navigator.serviceWorker.controller));
+    await page.context().setOffline(true);
+    let rendered = false;
+    try {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      rendered = (await page.locator("#view .q-card").count()) > 0;
+    } catch { rendered = false; }
+    await page.context().setOffline(false);
+    return { ok: (controlled ? 1 : 0) + (rendered ? 1 : 0), detail: `SW 제어 ${controlled} · 오프라인 렌더 ${rendered}` };
+  },
+
+  /* 같은 기기 두 탭이 동시에 열려 있어도 먼저 탭의 기록이 사라지지 않는가(C5-4).
+     같은 컨텍스트의 두 페이지는 저장소를 공유하므로 실제 두 탭과 같은 조건이다. */
+  async keepsRecordsAcrossTabs(page, { browser, port }) {
+    const shared = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    const open = async () => {
+      const tab = await shared.newPage();
+      await tab.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+      await tab.waitForSelector("#view [data-collect]", { timeout: 10000 });
+      return tab;
+    };
+    const tabA = await open();
+    await tabA.evaluate(() => localStorage.clear());
+    await tabA.reload({ waitUntil: "load" });
+    await tabA.waitForSelector("#view [data-collect]", { timeout: 10000 });
+    await tabA.locator("#view [data-collect]").first().click();
+    await tabA.waitForTimeout(250);
+    const tabB = await open();
+    await tabB.locator("[data-shuffle]").click();          // 다른 질문으로 바꿔 서로 다른 것을 수집한다
+    await tabB.waitForTimeout(200);
+    await tabB.locator("#view [data-collect]").first().click();
+    await tabB.waitForTimeout(300);
+    const stored = await tabB.evaluate(() => JSON.parse(localStorage.getItem("cheonchaek.v1")).questions.length);
+    await shared.close();
+    return { ok: stored, detail: `두 탭이 각각 수집한 뒤 남은 질문 ${stored}건` };
+  },
+
+  /* 글자를 200% 로 키운 폭(188px)에서 가로 넘침과 잘림이 없는가(WCAG 1.4.10).
+     기존 게이트는 한 번 재고 끝났고 A/B 로는 재지 않았다. */
+  async zoom200NoOverflow(page, { browser, port }) {
+    const zoomed = await browser.newContext({ viewport: { width: 188, height: 406 } });
+    const zoomPage = await zoomed.newPage();
+    await zoomPage.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load" });
+    await zoomPage.waitForSelector("#view .q-card", { timeout: 10000 });
+    const measured = await zoomPage.evaluate(() => {
+      const doc = document.documentElement;
+      const hero = document.querySelector(".q-text");
+      return {
+        overflow: Math.max(0, doc.scrollWidth - doc.clientWidth),
+        clipped: hero ? Math.max(0, hero.scrollHeight - hero.clientHeight) : 0,
+      };
+    });
+    await zoomed.close();
+    // 넘침·잘림은 적을수록 좋으므로 음수로 돌려 비교 규약에 맞춘다.
+    return {
+      ok: -(measured.overflow + measured.clipped),
+      detail: `가로 넘침 ${measured.overflow}px · 히어로 잘림 ${measured.clipped}px`,
+    };
+  },
+
   // 탭 전환 3값(히스토리·주소·렌더)이 어긋나지 않는가
   async tabTripleMatch(page) {
     let matched = 0;
@@ -231,7 +324,7 @@ try {
       let session = null;
       try {
         session = await coldPage(browser, port);
-        runs[side] = await probe(session.page);
+        runs[side] = await probe(session.page, { browser, port, coldPage });
       } catch (error) {
         runs[side] = { ok: false, detail: `측정 실패: ${String(error.message).slice(0, 120)}` };
       } finally {

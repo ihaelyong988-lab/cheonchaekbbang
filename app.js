@@ -196,7 +196,19 @@ function readStored() {
 }
 
 // 저장 키가 없던 첫 방문과 읽기 실패를 구분한다. 실패는 배너로 알린다(원장 10).
-let storageBroken = false;
+let storageBroken = false;      // 읽기 실패 — 저장된 기록을 못 읽었다
+/* 쓰기 가능 여부는 읽기만으로 알 수 없다. 용량이 찬 기기는 getItem 이 null 을 돌려주고
+   setItem 만 예외를 던지므로 storageBroken 이 켜지지 않는다. 그러면 매 방문 빈 상태로 부팅해
+   그 주 내내 첫 질문이 같은 문장으로 고정된다(A6 재발). 부팅 때 한 번 시험 삼아 써서 판정한다. */
+let storageWritable = true;
+function detectStorageWritable() {
+  try {
+    const probeKey = `${STORE_KEY}.probe`;
+    localStorage.setItem(probeKey, "1");
+    localStorage.removeItem(probeKey);
+    return true;
+  } catch { return false; }
+}
 function loadState() {
   let raw = null;
   try { raw = localStorage.getItem(STORE_KEY); } catch { storageBroken = true; }
@@ -206,6 +218,7 @@ function loadState() {
   }
   return { raw: typeof raw === "string" ? raw : null, state: sanitizeState() };
 }
+storageWritable = detectStorageWritable();
 const boot = loadState();
 const state = boot.state;
 let syncedSnapshot = cloneState(state);   // 병합 기준선 = 내가 마지막으로 읽거나 쓴 저장값
@@ -503,7 +516,7 @@ function drawQuestion() {
       : fresh;
     /* 저장이 거부되는 기기(비공개 모드·용량 초과)는 매 방문 이 분기를 탄다. 순서는 그 주의 것을 쓰되
        시작 위치만 흔들어 첫 질문이 그 주 내내 같은 문장으로 고정되지 않게 한다(A6). */
-    if (storageBroken) {
+    if (storageBroken || !storageWritable) {
       const offset = Math.floor(Math.random() * state.questionDeck.length);
       state.questionDeck = [...state.questionDeck.slice(offset), ...state.questionDeck.slice(0, offset)];
     }
