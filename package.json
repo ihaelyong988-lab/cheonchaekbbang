@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/data-integrity.mjs && node tests/search-quality.mjs && node tests/static-rules.mjs && node tests/question-rotation.mjs && node tests/mobile-navigation.mjs && node tests/feature-regression.mjs",
+    "test": "node tests/data-integrity.mjs && node tests/search-quality.mjs && node tests/static-rules.mjs && node tests/perf-budget.mjs && node tests/question-rotation.mjs && node tests/mobile-navigation.mjs && node tests/feature-regression.mjs",
     "test:data": "node tests/data-integrity.mjs",
     "test:search": "node tests/search-quality.mjs",
     "test:static": "node tests/static-rules.mjs",
@@ -11,7 +11,8 @@
     "test:mobile": "node tests/mobile-navigation.mjs",
     "test:features": "node tests/feature-regression.mjs",
     "test:production": "node tests/production-smoke.mjs",
-    "test:links": "node tests/external-links.mjs"
+    "test:links": "node tests/external-links.mjs",
+    "test:perf": "node tests/perf-budget.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1"
