@@ -203,6 +203,49 @@ assert.ok(josaList.indexOf("이나") < josaList.indexOf("이"),
   "긴 조사가 짧은 조사보다 뒤에 있으면 '이나'가 '이'로 먼저 잘립니다.");
 
 /* W0 — 테스트 체인이 패키지 매니저에 묶이지 않는다 (원장 62) */
+// 외부 링크 등록 규약 — 방문자를 밖으로 보내는 URL 은 등록부에 확인일과 함께 있어야 한다.
+// 왜: 2026-08-20 CanaryLab 에서 근거 원문 52건 중 2건이 404 였고, 게이트 6종 중 **링크를 열어보는 것이
+// 없었다**(스키마는 url 존재·형식만 봤다). 이 앱은 지금 외부 링크가 1건이라 안전하지만
+// VERIFIED_CORRECTIONS 는 검증 URL 을 늘려가는 설계다 — 늘어난 뒤에 게이트를 만들면 늦다.
+// 이 룰은 네트워크를 쓰지 않는다(도달 검사는 test:links 가 main 푸시에서 돈다) — PR 을 남의 사정에 걸지 않는다.
+const linkRegistry = JSON.parse(await read("data/external-links.json"));
+const registered = new Map(linkRegistry.links.map((link) => [link.url, link]));
+const EXTERNAL_URL = /https?:\/\/[A-Za-z0-9._~:\/?#@!$&*+,;=%-]+/gu;
+// 스키마·프로토콜 선언은 방문자가 누르는 링크가 아니다(schema.org, w3.org 등 네임스페이스).
+const NAMESPACE = /^https?:\/\/(schema\.org|www\.w3\.org|purl\.org|xmlns\.)/u;
+// 자기 배포 URL(canonical·og:url)은 제외한다 — 그 URL 의 도달은 tests/production-smoke.mjs 가 실브라우저로
+// 이미 소유한다. 두 곳에서 같은 것을 재면 한쪽이 낡아도 초록이 유지된다(정보 1곳 규약).
+const SELF_ORIGIN = /^https?:\/\/ihaelyong988-lab\.github\.io\/cheonchaekbbang/u;
+const scanned = [
+  ["data/books.js", books],
+  ["data/celeb-books-2025.js", celeb],
+  ["app.js", app],
+  ["index.html", html],
+  ["lib/search.js", search],
+];
+const foundLinks = new Map();
+for (const [file, source] of scanned) {
+  for (const raw of source.match(EXTERNAL_URL) || []) {
+    const url = raw.replace(/[.,;:)\]}"'`]+$/u, "");
+    if (NAMESPACE.test(url) || SELF_ORIGIN.test(url)) continue;
+    if (!foundLinks.has(url)) foundLinks.set(url, file);
+  }
+}
+const unregistered = [...foundLinks].filter(([url]) => !registered.has(url));
+assert.deepEqual(unregistered, [],
+  `등록되지 않은 외부 링크가 있습니다 — 열어서 확인한 뒤 data/external-links.json 에 checkedAt 과 함께 등록하세요: ${unregistered.map(([url, file]) => `${url}(${file})`).join(", ")}`);
+const today = Date.parse(new Date().toISOString().slice(0, 10));
+const staleLinks = linkRegistry.links.filter((link) => {
+  const checked = Date.parse(link.checkedAt);
+  return !Number.isFinite(checked) || (today - checked) / 86400000 > linkRegistry.maxAgeDays;
+});
+assert.deepEqual(staleLinks.map((link) => link.url), [],
+  `링크 확인일이 ${linkRegistry.maxAgeDays}일을 넘었습니다 — 다시 열어 확인하고 checkedAt 을 갱신하세요.`);
+// 등록부에만 남은 URL 은 죽은 등록이다 — 목록이 실제 코드와 어긋나면 다음 사람이 등록부를 믿지 못한다.
+const orphanLinks = linkRegistry.links.filter((link) => !foundLinks.has(link.url));
+assert.deepEqual(orphanLinks.map((link) => link.url), [],
+  "코드에서 사라진 URL 이 등록부에 남아 있습니다 — 등록을 지우세요.");
+
 const pkg = JSON.parse(await read("package.json"));
 assert.doesNotMatch(pkg.scripts.test, /npm run|pnpm run|yarn/u,
   "테스트 체인이 특정 패키지 매니저 호출에 묶여 있습니다 — 락파일은 pnpm, 내부 호출은 npm 이었습니다(원장 62).");

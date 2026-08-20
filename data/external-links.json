@@ -1,0 +1,14 @@
+{
+  "_why": "데이터·앱이 방문자를 밖으로 보내는 링크 등록부. 여기 없는 외부 URL 은 static-rules 게이트가 막는다.",
+  "_reason": "2026-08-20, 다른 저장소(CanaryLab)에서 근거 원문 링크 52건 중 2건이 404 였고 게이트 6종 중 링크를 열어보는 것이 없었다. 이 앱은 지금 외부 링크가 1건이라 안전하지만, VERIFIED_CORRECTIONS 는 검증 URL 을 늘려가는 설계다 — 늘어나는 순간 같은 결함이 생긴다. 그래서 '추가할 때' 막는다.",
+  "_rule": "URL 을 추가하려면 ① 실제로 열어 200·본문을 확인하고 ② 아래에 checkedAt(확인일)·note 와 함께 등록한다. 도달 재확인은 npm run test:links(main 푸시 잡)에서 돌고, 등록 여부·기한은 오프라인 룰이 PR 마다 채점한다.",
+  "maxAgeDays": 365,
+  "links": [
+    {
+      "url": "https://www.yes24.com/product/goods/11192883",
+      "usedBy": "data/celeb-books-2025.js VERIFIED_CORRECTIONS.later-youth-leaving.verificationUrl",
+      "checkedAt": "2026-08-20",
+      "note": "예스24 서지(티어라이너, 더난출판사, 2013-10-24) — HTTP 200 확인"
+    }
+  ]
+}
