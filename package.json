@@ -10,7 +10,8 @@
     "test:rotation": "node tests/question-rotation.mjs",
     "test:mobile": "node tests/mobile-navigation.mjs",
     "test:features": "node tests/feature-regression.mjs",
-    "test:production": "node tests/production-smoke.mjs"
+    "test:production": "node tests/production-smoke.mjs",
+    "test:links": "node tests/external-links.mjs"
   },
   "devDependencies": {
     "playwright": "1.61.1"

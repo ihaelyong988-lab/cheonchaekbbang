@@ -46,3 +46,6 @@ jobs:
       - name: Pages 재배포 대기
         run: sleep 180
       - run: pnpm run test:production
+      # 외부 링크 도달 — 등록부(data/external-links.json)의 URL 을 실제로 연다.
+      # PR 체인에 넣지 않는 이유는 test:production 과 같다: 남의 서버 사정으로 빨강이 되면 게이트를 믿지 않게 된다.
+      - run: pnpm run test:links
