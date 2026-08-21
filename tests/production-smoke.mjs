@@ -11,7 +11,7 @@ const assets = {
   "data/celeb-books-2025.js": "verified-correction",
   "lib/search.js": "createQuestionSearch",
   "manifest.webmanifest": '"standalone"',
-  "sw.js": "ccb-v1.16.0",
+  "sw.js": "ccb-v1.17.0",
 };
 
 for (const [asset, marker] of Object.entries(assets)) {
@@ -76,13 +76,13 @@ try {
     assert.deepEqual(await page.evaluate(async () => {
       const { BOOKS } = await import(new URL("./data/books.js", location.href).href);
       return [BOOKS.length, BOOKS.reduce((sum, book) => sum + book.questions.length, 0)];
-    }), [175, 590], `${width}px: 운영 데이터 수 불일치`);
+    }), [200, 665], `${width}px: 운영 데이터 수 불일치`);
     assert.equal(await page.locator(".q-card").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(214, 214, 207)");
     if (width === 390) {
       await page.locator("#question-search").fill("돈과 투자는 어떻게 판단해야 하는가");
       await page.locator("#question-search-form").evaluate((form) => form.requestSubmit());
       assert.ok(await page.getByText("현명한 투자자", { exact: true }).count() > 0, "운영 질문 검색 실패");
-      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.16.0"), "운영 SW 캐시 버전 불일치");
+      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.17.0"), "운영 SW 캐시 버전 불일치");
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
       assert.equal(await page.locator('.tab[aria-current="page"] span').textContent(), "홈", "운영 오프라인 reload 실패");
@@ -101,9 +101,9 @@ console.log(JSON.stringify({
   url: baseURL.href,
   assets: Object.keys(assets),
   viewports: verifiedViewports,
-  books: 175,
-  questions: 590,
+  books: 200,
+  questions: 665,
   siteName: "천책빵",
-  cache: "ccb-v1.16.0",
+  cache: "ccb-v1.17.0",
   offline: true,
 }, null, 2));

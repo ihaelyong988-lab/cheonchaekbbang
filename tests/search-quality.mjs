@@ -6,11 +6,12 @@ const search = createQuestionSearch(BOOKS);
 const cases = [
   { query: "돈과 투자는 어떻게 판단해야 하는가", titles: ["현명한 투자자"], domains: ["경제·사회"] },
   { query: "정의와 공정은 무엇인가", titles: ["정의란 무엇인가", "국가"], domains: ["철학", "경제·사회"] },
-  /* 2026-08-10 — 사람이 쓴 질문 276개가 들어오면서 이 질의에 더 직접 답하는 책이 늘었다.
-     상위 5는 정관정요(듣기 싫은 말을 들을 제도)·반지의 제왕(절대 권력의 타락)·대부(권력 세습)가
-     차지하고 사회계약론은 8위다. 그 책의 질문은 자유·동의·정당성이라 이 질의에는 덜 맞는다.
-     못 찾게 된 것이 아니라 더 맞는 답이 앞에 선 것이므로, 창을 넓히는 대신 요구를 나눈다. */
-  { query: "권력과 국가는 왜 부패하는가", titles: ["정관정요"], found: ["사회계약론"], domains: ["역사", "경제·사회", "문학"] },
+  /* 2026-08-21 — 「이 책이 나와야 한다」는 기준은 카탈로그가 커지면 무너진다. 역사 25권이 들어오자
+     사회계약론이 결과 8칸 밖으로 밀렸는데, 그 책의 질문은 자유·동의·정당성이라 이 질의에는 덜 맞는다.
+     제목을 지목하는 대신 **노출된 질문이 실제로 질의에 답하는가**를 잰다 — 더 엄한 기준이다.
+     이 기준이 실제로 문제를 찾아냈다: 5위 연대기는 원리(권력은 타락시킨다)로 걸렸으나
+     노출 질문은 기록의 공정성이라 질의와 무관하다(§10-8 원장 78). */
+  { query: "권력과 국가는 왜 부패하는가", titles: ["정관정요"], relevant: ["권력", "국가", "부패"], relevantMin: 3, domains: ["역사", "경제·사회", "문학"] },
   { query: "우주는 어떻게 시작되었는가", titles: ["시간의 역사", "코스모스"], domains: ["과학", "문학"] },
   { query: "사랑과 관계는 사람을 어떻게 바꾸는가", titles: ["노르웨이의 숲"], domains: ["문학", "철학"] },
   { query: "아름다움과 예술은 누가 판단하는가", titles: ["판단력비판"], domains: ["예술", "문학"] },
@@ -28,6 +29,14 @@ for (const benchmark of cases) {
   const allTitles = results.map((item) => item.book.title);
   for (const title of benchmark.found || []) {
     assert.ok(allTitles.includes(title), `${benchmark.query}: 결과에 ${title} 없음`);
+  }
+  /* 노출된 질문이 질의에 실제로 답하는가. 책이 원리로 걸리고 엉뚱한 질문을 내보내는 경우를 잡는다 —
+     제목을 지목하는 기준과 달리 카탈로그가 커져도 무너지지 않는다. */
+  if (benchmark.relevant) {
+    const hits = results.slice(0, 5)
+      .filter((item) => benchmark.relevant.some((word) => item.matchedQuestion.text.includes(word)));
+    assert.ok(hits.length >= benchmark.relevantMin,
+      `${benchmark.query}: 상위 5권 중 질의 낱말이 걸린 질문이 ${hits.length}건 (하한 ${benchmark.relevantMin}) — 책은 맞고 질문이 엉뚱합니다.`);
   }
   assert.ok(
     results.slice(0, 3).every((item) => benchmark.domains.includes(item.book.domain)),

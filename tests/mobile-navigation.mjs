@@ -163,7 +163,7 @@ try {
       literature: BOOKS.filter((book) => book.domain === "문학").length,
     };
   });
-  assert.deepEqual(catalog, { books: 175, questions: 590, literature: 64 });
+  assert.deepEqual(catalog, { books: 200, questions: 665, literature: 64 });   // 2026-08-21 역사 25권 확장
 
   /* [§4-4 임계 단일 출처] 글자수 버킷은 app.js 의 매핑을 읽어 그대로 쓴다.
      테스트가 값을 따로 적으면 앱이 압축 단계를 바꿀 때 옛 버킷으로 재어 거짓 통과한다. */

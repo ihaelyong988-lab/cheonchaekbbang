@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { principleQuoteQuestion } from "../data/celeb-books-2025.js";
 import { readFile } from "node:fs/promises";
 import { BOOKS, DOMAIN_TARGETS, DOMAINS, JOURNEYS } from "../data/books.js";
+import { HISTORY_CLASSICS } from "../data/history-classics.js";
 import {
   CELEB_BOOKS,
   CELEB_EXISTING_ENRICHMENTS,
@@ -14,7 +15,20 @@ assert.equal(CELEB_SOURCE_TOTAL, 66, "인생책 시트 66행만 보존해야 합
 assert.equal(CELEB_UNIQUE_TOTAL, 65, "동일 작품 Good to Great 두 행은 한 작품으로 합쳐야 합니다.");
 assert.equal(CELEB_NEW_TOTAL, 56, "신규 작품 수가 예상과 다릅니다.");
 assert.equal(Object.keys(CELEB_EXISTING_ENRICHMENTS).length, 9, "기존 ID 결합 수가 예상과 다릅니다.");
-assert.equal(BOOKS.length, 175, "최종 앱 도서 수가 예상과 다릅니다.");
+assert.equal(BOOKS.length, 200, "최종 앱 도서 수가 예상과 다릅니다.");
+/* 숫자만 고치는 게이트는 확장마다 손이 가고, 그 사이 조용히 사라진 책을 못 잡는다.
+   각 출처 파일의 id 가 최종 카탈로그에 전부 살아 있는지 함께 센다(2026-08-21 역사 확장). */
+{
+  const ids = new Set(BOOKS.map((book) => book.id));
+  const missing = HISTORY_CLASSICS.filter((book) => !ids.has(book.id)).map((book) => book.id);
+  assert.deepEqual(missing, [], `역사 확장 도서가 최종 카탈로그에서 빠졌습니다: ${missing.join(", ")}`);
+  assert.equal(new Set(HISTORY_CLASSICS.map((book) => book.id)).size, HISTORY_CLASSICS.length,
+    "역사 확장 목록에 중복 id 가 있습니다.");
+  for (const book of HISTORY_CLASSICS) {
+    assert.equal(book.domain, "역사", `${book.id}: 역사 확장 목록에 다른 분야가 섞였습니다.`);
+    assert.ok(book.roots.length === 1 && ids.has(book.roots[0]), `${book.id}: 부모 책이 카탈로그에 없습니다.`);
+  }
+}
 assert.equal(new Set(BOOKS.map((book) => book.id)).size, BOOKS.length, "도서 id가 중복됩니다.");
 assert.equal(
   new Set(BOOKS.map((book) => book.title.replace(/[\s,·.]/g, "").toLocaleLowerCase("ko-KR"))).size,
