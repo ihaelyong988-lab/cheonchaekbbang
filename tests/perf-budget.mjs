@@ -19,12 +19,17 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /* §7 예산 (2026-08-21 재측정 기준).
    단위와 대상 집합을 여기 못박는다 — 전에는 "약 116KB" 만 적혀 있어 원바이트로 재면 초과,
    gzip 으로 재면 예산 내가 되어 어느 쪽으로도 판정할 수 없었다(측정 실패). */
+/* 2026-08-21 역사 25권 확장으로 상향. 실측 증가분(원바이트 +20,888 B · gzip +6,321 B)에
+   소폭 여유만 얹었다 — 예산을 넉넉히 잡으면 다음 확장이 조용히 통과한다.
+   **경고: 이 방식은 1,000권까지 확장할 수 없다.** 1권당 836 B(gzip 253 B)이므로 825권을 더하면
+   gzip 총 296,537 B 로 이 예산의 3.2배가 되고 Fast-3G 첫 질문카드가 약 1초 늦어진다.
+   카탈로그를 초기 번들에서 빼는 구조 변경이 선행돼야 한다(§7-2). */
 const BUDGET = {
   hops: 3,
-  modules: 6,
-  rawBytes: 290_000,
-  gzipBytes: 94_000,
-  perFile: { "app.js": 122_000, "data/authored-questions.js": 29_000 },
+  modules: 7,
+  rawBytes: 310_000,
+  gzipBytes: 100_000,
+  perFile: { "app.js": 122_000, "data/authored-questions.js": 29_000, "data/history-classics.js": 23_000 },
 };
 
 // app.js 에서 시작해 상대 경로 import 를 따라간다. 홉 수는 app.js 를 0단으로 센 최대 깊이다.

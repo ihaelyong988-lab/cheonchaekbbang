@@ -74,11 +74,11 @@ try {
   // 서재 1,000권 확장 대비: 80권 단위 지연 렌더링.
   await page.locator('.tab[data-tab="library"]').click();
   assert.equal(await page.locator("#lib-list > .card").count(), 80);
-  assert.equal(await page.locator(".load-more").textContent(), "더 보기 · 80/175권");
+  assert.equal(await page.locator(".load-more").textContent(), "더 보기 · 80/200권");
   await page.locator(".load-more").click();
   assert.equal(await page.locator("#lib-list > .card").count(), 160);
   await page.locator(".load-more").click();
-  assert.equal(await page.locator("#lib-list > .card").count(), 175);
+  assert.equal(await page.locator("#lib-list > .card").count(), 200);
 
   // 일반 시트의 모달 의미, 배경 inert, 포커스 트랩, Escape, 호출 위치 복귀.
   const firstCard = page.locator("#lib-list > .card").first();
@@ -357,7 +357,7 @@ try {
     "좁혀진 서재에 전체 보기로 되돌리는 컨트롤이 없습니다(원장 50 · 36).");
   await gauge.page.locator("[data-lib-reset]").click();
   await gauge.page.waitForTimeout(250);
-  assert.equal(await gauge.page.locator(".library-summary").textContent(), "전체 서재 · 175권", "되돌림이 전체 서재로 복원하지 않았습니다.");
+  assert.equal(await gauge.page.locator(".library-summary").textContent(), "전체 서재 · 200권", "되돌림이 전체 서재로 복원하지 않았습니다.");
   assert.equal(await gauge.page.locator("[data-lib-reset]").count(), 0, "되돌린 뒤에도 되돌림 컨트롤이 남아 있습니다.");
   assert.deepEqual(gauge.errors, []);
   await gauge.context.close();

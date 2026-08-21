@@ -77,7 +77,11 @@ export { Q_POOL, Q_BY_ID, BY_ID, DOMAINS, weeklyQuestionIds, weightByReading, se
 }
 
 /* 100년치 실제 ISO 주차 키. 씨앗은 달력이 아니라 키 문자열이므로 키만 있으면 된다. */
-function weekKeys(years = 100, fromYear = 2026) {
+/* 창은 문항 수에 맞춰야 한다. 전 문항이 1번 자리에 닿으려면 대략 N·ln(N) 주가 필요하고
+   (665문항이면 약 4,330주), 창이 그 근처면 우연히 한둘이 빠진다 — 속성이 아니라 표본의 문제다.
+   200년(10,400주)이면 665문항에서 미도달 기대값이 0.0001 미만이다. 창을 넓혀도 구조적 결함은
+   그대로 잡힌다 — 고정 간격으로 뽑던 옛 방식은 어느 창에서도 265문항이 미도달이었다. */
+function weekKeys(years = 200, fromYear = 2026) {
   const keys = [];
   for (let y = fromYear; y < fromYear + years; y += 1) {
     for (let w = 1; w <= 52; w += 1) keys.push(`${y}-W${String(w).padStart(2, "0")}`);

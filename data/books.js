@@ -4,6 +4,7 @@
 
 import { RESEARCH_BOOKS, RESEARCH_BY_BOOK_ID } from "./research-books.js";
 import { AUTHORED_QUESTIONS } from "./authored-questions.js";
+import { HISTORY_CLASSICS } from "./history-classics.js";
 import { CELEB_BOOKS, CELEB_EXISTING_ENRICHMENTS, principleQuoteQuestion } from "./celeb-books-2025.js";
 
 export const DOMAINS = ["철학", "역사", "과학", "문학", "경제·사회", "예술"];
@@ -397,6 +398,7 @@ const COMBINED_BOOKS = [
       : book;
   }),
   ...CELEB_BOOKS,
+  ...HISTORY_CLASSICS,
 ];
 
 // 절단 규칙은 data/celeb-books-2025.js 의 principleQuoteQuestion 하나만 쓴다(원장 2).
