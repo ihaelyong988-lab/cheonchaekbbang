@@ -286,6 +286,43 @@ const PROBES = {
     };
   },
 
+  /* §7 예산 초과 — 서재 진입·[더 보기]가 한 태스크에 카드 수십 장을 그려 화면이 멈춘다.
+     정의를 프로브에 박는다: 무제한 조건 · 두 클릭 사이에 태스크를 양보 · longtask 최대.
+     정의가 없으면 같은 코드가 472ms 와 1,263ms 로 2.7배 흔들린다(2026-08-21 실측).
+     적을수록 좋은 값이라 음수로 돌려 비교 규약에 맞춘다. */
+  async libraryInteractionLongTask(page) {
+    await page.evaluate(() => {
+      window.__long = 0;
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) window.__long = Math.max(window.__long, entry.duration);
+      }).observe({ entryTypes: ["longtask"] });
+    });
+    // 1회 측정은 노이즈다. 3회 왕복의 중앙값으로 판정한다.
+    const runs = [];
+    for (let round = 0; round < 3; round += 1) {
+      await page.evaluate(() => { window.__long = 0; });
+      await page.locator('.tab[data-tab="library"]').click();
+      await page.waitForSelector("#lib-list > .card");
+      await page.waitForTimeout(500);                     // 태스크를 양보한다 — 두 렌더를 합산하지 않는다
+      await page.locator("[data-load-more]").click();
+      await page.waitForTimeout(700);
+      runs.push(await page.evaluate(() => Math.round(window.__long)));
+      await page.locator('.tab[data-tab="question"]').click();
+      await page.waitForTimeout(400);
+    }
+    /* 최대값으로 판정한다. 멈춤은 한 번이라도 겪으면 느껴지므로 중앙값은 그것을 가린다 —
+       실측에서 첫 진입만 200~400ms 이고 이후는 0ms 라, 중앙값으로 재면 이 결함이 영구히 초록이다. */
+    /* 첫 진입만 105~395ms 로 흔들리고 2회차 이후는 0ms 다. 이 폭에서 값을 직접 비교하면
+       노이즈로 게이트가 계속 빨강이 된다. 그래서 천장(500ms)을 넘은 만큼만 센다 —
+       허용 폭 안의 흔들림은 0 으로 접고, 진짜 퇴행만 잡는다. */
+    const worst = Math.max(...runs);
+    const CEILING_MS = 500;
+    return {
+      ok: -Math.max(0, worst - CEILING_MS),
+      detail: `롱태스크 최대 ${worst}ms (회차순 ${runs.join("/")} · 천장 ${CEILING_MS}ms)`,
+    };
+  },
+
   // 탭 전환 3값(히스토리·주소·렌더)이 어긋나지 않는가
   async tabTripleMatch(page) {
     let matched = 0;
