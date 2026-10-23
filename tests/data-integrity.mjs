@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { principleQuoteQuestion } from "../data/celeb-books-2025.js";
-import { readFile } from "node:fs/promises";
-import { BOOKS, DOMAIN_TARGETS, DOMAINS, JOURNEYS } from "../data/books.js";
+import { readFile, readdir } from "node:fs/promises";
+import { BOOKS, DOMAIN_TARGETS, DOMAINS, JOURNEYS, IS_SEED } from "../data/books.js";
+import { buildArtifacts } from "../scripts/build-shards.mjs";
 import { HISTORY_CLASSICS } from "../data/history-classics.js";
 import {
   CELEB_BOOKS,
@@ -48,6 +49,20 @@ assert.equal(
     [BOOKS.length, BOOKS.reduce((sum, book) => sum + book.questions.length, 0)],
     "production-smoke 의 도서·질문 수가 실제 데이터와 어긋납니다(배포 후에야 빨강이 됩니다)."
   );
+}
+
+/* §7-2 V3b — 앱은 생성물(부팅 색인·샤드)만 읽는다. 원천을 고치고 생성을 잊으면 앱은 옛 책을 보여 주면서 이 게이트는
+   원천만 보고 초록이 된다. 생성기를 다시 돌려 디스크와 글자 단위로 대조한다(CRLF 체크아웃은 LF 로 맞춰 비교). */
+{
+  const artifacts = buildArtifacts({ BOOKS, JOURNEYS, DOMAINS, IS_SEED });
+  for (const [rel, content] of artifacts) {
+    const onDisk = (await readFile(new URL(`../${rel}`, import.meta.url), "utf8")).replace(/\r\n/gu, "\n");
+    assert.equal(onDisk, content, `${rel} 이 원천과 다릅니다 — npm run build:shards 로 다시 생성하세요.`);
+  }
+  const shardDir = (await readdir(new URL("../data/shards/", import.meta.url)))
+    .filter((file) => file.endsWith(".js")).map((file) => `data/shards/${file}`).sort();
+  assert.deepEqual(shardDir, [...artifacts.keys()].filter((rel) => rel.startsWith("data/shards/")).sort(),
+    "data/shards 에 생성기가 만들지 않은 파일이 있습니다 — 지우거나 생성기에 넣으세요.");
 }
 
 const byId = new Map(BOOKS.map((book) => [book.id, book]));

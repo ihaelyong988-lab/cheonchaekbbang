@@ -7,11 +7,12 @@ const assets = {
   "index.html": "천책빵",
   "app.js": "PRD-천책빵.md v1.7",
   "app.css": "--hero-accent",
-  "data/books.js": "DOMAIN_TARGETS",
-  "data/celeb-books-2025.js": "verified-correction",
+  "data/boot-index.js": "export const BOOT",
+  "data/shards/philosophy.questions.js": "export const QUESTIONS",
+  "data/shards/philosophy.meta.js": "export const META",
   "lib/search.js": "createQuestionSearch",
   "manifest.webmanifest": '"standalone"',
-  "sw.js": "ccb-v1.18.0",
+  "sw.js": "ccb-v1.19.0",
 };
 
 for (const [asset, marker] of Object.entries(assets)) {
@@ -74,15 +75,16 @@ try {
     assert.equal(await page.locator(".tab").count(), 4, `${width}px: 4탭 누락`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), true, `${width}px: 가로 넘침`);
     assert.deepEqual(await page.evaluate(async () => {
-      const { BOOKS } = await import(new URL("./data/books.js", location.href).href);
-      return [BOOKS.length, BOOKS.reduce((sum, book) => sum + book.questions.length, 0)];
+      // 앱이 실제로 읽는 생성물(부팅 색인)에서 센다 — 원천 모듈은 배포돼 있어도 앱이 읽지 않는다(§7-2 V3b).
+      const { BOOT } = await import(new URL("./data/boot-index.js", location.href).href);
+      return [BOOT.length, BOOT.reduce((sum, row) => sum + row[2], 0)];
     }), [200, 665], `${width}px: 운영 데이터 수 불일치`);
     assert.equal(await page.locator(".q-card").evaluate((element) => getComputedStyle(element).backgroundColor), "rgb(214, 214, 207)");
     if (width === 390) {
       await page.locator("#question-search").fill("돈과 투자는 어떻게 판단해야 하는가");
       await page.locator("#question-search-form").evaluate((form) => form.requestSubmit());
       assert.ok(await page.getByText("현명한 투자자", { exact: true }).count() > 0, "운영 질문 검색 실패");
-      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.18.0"), "운영 SW 캐시 버전 불일치");
+      assert.ok((await page.evaluate(() => caches.keys())).includes("ccb-v1.19.0"), "운영 SW 캐시 버전 불일치");
       await context.setOffline(true);
       await page.reload({ waitUntil: "domcontentloaded" });
       assert.equal(await page.locator('.tab[aria-current="page"] span').textContent(), "홈", "운영 오프라인 reload 실패");
@@ -104,6 +106,6 @@ console.log(JSON.stringify({
   books: 200,
   questions: 665,
   siteName: "천책빵",
-  cache: "ccb-v1.18.0",
+  cache: "ccb-v1.19.0",
   offline: true,
 }, null, 2));
