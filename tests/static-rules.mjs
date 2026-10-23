@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,9 +61,25 @@ assert.match(html, /"@type":"WebSite","name":"천책빵"/u, "WebSite 구조화 �
 
 const cachedAssets = [...sw.matchAll(/"\.\/([^"\n]+)"/gu)].map((match) => match[1]);
 for (const asset of cachedAssets) assert.ok(existsSync(path.join(ROOT, asset)), `SW 자산 누락: ${asset}`);
-for (const required of ["app.js", "app.css", "lib/search.js", "data/books.js", "data/celeb-books-2025.js"]) {
+/* §7-2 V3b — 오프라인 완전 동작(INV-5)은 부팅 색인과 샤드 전부가 프리캐시돼야 성립한다. 샤드 목록은 손으로 적지 않고
+   디스크에서 센다(§9 E-028 · E-032). 원천 모듈(data/books.js 등)은 Node 전용이라 프리캐시하면 카탈로그를 두 번 받는다. */
+const shardFiles = readdirSync(path.join(ROOT, "data/shards")).filter((file) => file.endsWith(".js")).map((file) => `data/shards/${file}`);
+assert.ok(shardFiles.length >= 12, `샤드 파일이 ${shardFiles.length}개뿐입니다 — 생성이 덜 됐습니다(npm run build:shards).`);
+for (const required of ["app.js", "app.css", "lib/search.js", "data/boot-index.js", ...shardFiles]) {
   assert.ok(cachedAssets.includes(required), `SW 캐시 자산 누락: ${required}`);
 }
+for (const sourceModule of ["data/books.js", "data/authored-questions.js", "data/history-classics.js", "data/research-books.js", "data/celeb-books-2025.js"]) {
+  assert.ok(!cachedAssets.includes(sourceModule), `원천 모듈 ${sourceModule} 을 프리캐시하면 카탈로그를 두 번 받습니다 — 샤드만 캐시합니다.`);
+}
+assert.match(app, /import \{ BOOT, SHARDS, JOURNEYS, DOMAINS, IS_SEED \} from "\.\/data\/boot-index\.js"/u,
+  "app.js 는 부팅 색인만 정적으로 가져와야 합니다(§7-2 V3b).");
+assert.doesNotMatch(app, /from "\.\/data\/books\.js"/u,
+  "카탈로그 원천 모듈을 초기 번들에 다시 실었습니다 — 1,000권에서 첫 질문카드가 예산을 깹니다(§7-2).");
+assert.match(app, /import\(`\.\/data\/shards\/\$\{SHARDS\[domain\]\}\.\$\{kind\}\.js`\)/u, "샤드 동적 import 경로 누락");
+assert.match(app, /function render\(\) \{\s*\n\s*const v = top\(\);\s*\n\s*if \(!viewReady\(v\)\)/u,
+  "render 입구의 샤드 준비 가드가 없습니다 — 본문 없는 책으로 화면을 그립니다.");
+assert.match(app, /questionSearchIndex \?\?= createQuestionSearch\(ALL\)/u,
+  "검색 색인은 첫 검색에서 지연 생성해야 합니다 — 부팅 때 만들면 본문 없는 책으로 굳습니다.");
 /* §0-3 3항 — 캐시 버전을 하드코딩한 지점 전수 일치. 지점을 열거하면 원본이 늘 때 조용히 낡는다(§9 E-015).
    정규식 이스케이프로 적힌 값도 같은 값으로 세도록 역슬래시를 걷어내고 센다. */
 const cacheVersionSources = `${sw}\n${productionSmoke}\n${await read("tests/static-rules.mjs")}`;

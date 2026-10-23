@@ -1,16 +1,17 @@
 // 천책빵 — 뿌리를 찾는 서재 (PRD-천책빵.md v1.7)
-import { BOOKS, JOURNEYS, DOMAINS, IS_SEED } from "./data/books.js";
+import { BOOT, SHARDS, JOURNEYS, DOMAINS, IS_SEED } from "./data/boot-index.js";
 import { createQuestionSearch, compactSearchText, TOPIC_CHIPS } from "./lib/search.js";
 
 /* ── 데이터 무결성 검증 (PRD §5) ───────────────────── */
+// 부팅 색인 행(id·분야·질문 수·계단·roots)으로 구조만 검증한다. 원리·뿌리 이유·질문 본문은 샤드가 뒤에 오므로
+// 여기서는 볼 수 없고, 그 공란은 tests/data-integrity.mjs 가 생성 시점에 막는다(§7-2 V3b).
 function validateBooks(books) {
   const byId = new Map(books.map((b) => [b.id, b]));
   const bad = new Set();
   for (const b of books) {
     const isRoot = b.tier === "root";
     if (isRoot !== (b.roots.length === 0)) { bad.add(b.id); console.warn("무결성: tier/roots 불일치", b.id); continue; }
-    if (!b.principle || !b.questions || b.questions.length === 0) { bad.add(b.id); console.warn("무결성: principle/questions 공란", b.id); continue; }
-    if (!isRoot && !b.root_reason) { bad.add(b.id); console.warn("무결성: root_reason 공란", b.id); continue; }
+    if (!b.questions || b.questions.length === 0) { bad.add(b.id); console.warn("무결성: questions 공란", b.id); continue; }
     if (!isRoot) {
       let cur = b, hops = 0, ok = false;
       const seen = new Set();
@@ -27,6 +28,8 @@ function validateBooks(books) {
   }
   return books.filter((b) => !bad.has(b.id));
 }
+/* 부팅 색인 → 책 객체. 질문 자리는 수만큼 비워 두고 샤드가 채운다 — id 열이 questionId 와 같아 주 덱이 보존된다(INV-11). */
+const BOOKS = BOOT.map(([id, domain, qn, tier, roots]) => ({ id, domain, tier, roots, questions: Array.from({ length: qn }, () => null) }));
 const ALL = validateBooks(BOOKS);
 const BY_ID = new Map(ALL.map((b) => [b.id, b]));
 const TIER_ORDER = { root: 0, trunk: 1, branch: 2 };
@@ -62,6 +65,43 @@ const Q_POOL = ALL.flatMap((book) => book.questions.map((q, index) => ({
 })));
 const Q_BY_ID = new Map(Q_POOL.map((item) => [item.id, item]));
 const VALID_QUESTION_IDS = new Set(Q_BY_ID.keys());
+
+/* ── 카탈로그 샤드 지연 로드 (§7-2 V3b) ─────────────── */
+// 질문 본문과 메타(제목·저자·원리·시대·뿌리 이유)는 분야별 샤드로 나뉘어 필요할 때 들어온다.
+// 같은 샤드를 두 번 받지 않도록 Promise 를 보관하고, 도착한 샤드는 책 객체와 질문 객체를 제자리에서 채운다.
+const shardLoads = new Map();
+const shardReady = new Set();
+let catalogComplete = false;
+function loadShard(kind, domain) {
+  const key = `${kind}:${domain}`;
+  if (!shardLoads.has(key)) {
+    shardLoads.set(key, import(`./data/shards/${SHARDS[domain]}.${kind}.js`).then((mod) => {
+      if (kind === "questions") {
+        for (const [bookId, list] of Object.entries(mod.QUESTIONS)) {
+          const book = BY_ID.get(bookId);
+          if (!book) continue;
+          list.forEach((q, index) => {
+            book.questions[index] = q;
+            const item = Q_BY_ID.get(questionId(book, index));
+            if (item) item.q = q;
+          });
+        }
+      } else {
+        for (const meta of mod.META) {
+          const book = BY_ID.get(meta.id);
+          if (book) Object.assign(book, meta);
+        }
+      }
+      shardReady.add(key);
+    }));
+  }
+  return shardLoads.get(key);
+}
+const isShardReady = (kind, domain) => shardReady.has(`${kind}:${domain}`);
+function loadAllShards() {
+  return Promise.all(DOMAINS.flatMap((d) => [loadShard("questions", d), loadShard("meta", d)]))
+    .then(() => { catalogComplete = true; });
+}
 
 /* ── 사용자 상태 (localStorage) ─────────────────────── */
 const STORE_KEY = "cheonchaek.v1";
@@ -371,7 +411,13 @@ function redrawIfWeekChanged() {
   if (isoWeekKey() === state.questionWeek) return;
   heroQuestion = drawQuestion();
   if (!updateHero()) render();               // 히어로 한 장만 바뀐다 — 구조가 바뀔 때만 전체 렌더다(원장 20)
-  announce(`이번 주의 질문이 새로 열렸습니다. ${heroQuestion.q.text}`);
+  announceHeroQuestion("이번 주의 질문이 새로 열렸습니다.");
+}
+// 새로 뽑힌 질문의 샤드가 아직 없으면 도착한 뒤 읽어 준다 — 본문 없는 채로 낭독을 건너뛰지 않는다(원장 75).
+function announceHeroQuestion(prefix) {
+  const say = () => announce(`${prefix} ${heroQuestion.q.text}`);
+  if (heroQuestion.q) say();
+  else loadShard("questions", BY_ID.get(heroQuestion.bookId).domain).then(say);
 }
 window.addEventListener("visibilitychange", redrawIfWeekChanged);
 window.addEventListener("pageshow", redrawIfWeekChanged);
@@ -940,7 +986,9 @@ let libVisibleCount = LIB_PAGE_SIZE;
 let dropArmedId = null;          // 수집 취소를 한 번 확인받는 대상 질문 id (세션 한정)
 let openProgressDomain = null;   // 기록 탭 계보 진행률에서 펼쳐 둔 분야 1개(세션 한정 — 복원 대상 아님, C5-2)
 let questionQuery = "", questionResults = [], questionNotice = "";
-const findBooksForQuestion = createQuestionSearch(ALL);
+/* 검색 색인은 전 샤드가 도착한 뒤 첫 검색에서 한 번 만든다. 부팅 때 만들면 본문 없는 책으로 색인이 굳는다(§7-2 V3b). */
+let questionSearchIndex = null;
+const findBooksForQuestion = (query) => (questionSearchIndex ??= createQuestionSearch(ALL))(query);
 
 function questionSearchHtml() {
   const results = questionResults.length
@@ -1036,6 +1084,7 @@ function heroFacts() {
 function updateHero() {
   const card = viewEl.querySelector(".q-card");
   if (!card) return false;
+  if (!heroQuestion?.q) { render(); return true; }   // 새 질문의 샤드가 아직 없다 — 전체 렌더 경로가 도착을 기다린다
   const facts = heroFacts();
   if (!facts.book) return false;
   const textEl = card.querySelector(".q-text");
@@ -1061,7 +1110,7 @@ function updateHero() {
 function updateRecentQuestion() {
   const card = viewEl.querySelector("[data-land-question]");
   const last = state.questions[state.questions.length - 1];
-  const text = last ? Q_BY_ID.get(last.id)?.q.text : null;
+  const text = last ? Q_BY_ID.get(last.id)?.q?.text : null;
   if (!card || !text) return false;
   card.dataset.landQuestion = last.id;
   card.querySelector(".card-title").textContent = text;
@@ -1715,14 +1764,50 @@ function insertUpdateNotice() {
   else viewEl.insertAdjacentHTML("afterbegin", updateNoticeHtml());
 }
 
+/* ── 화면이 요구하는 샤드 (§7-2 V3b) ───────────────── */
+// 홈은 히어로 질문·최근 질문의 분야 질문 샤드와 읽는 중 책의 메타만 있으면 그릴 수 있다.
+// 그 밖의 탭과 모든 오버레이, 검색 결과가 열린 홈은 전 카탈로그를 기다린다.
+function homeNeeds() {
+  const needs = [];
+  const heroBook = BY_ID.get(heroQuestion?.bookId);
+  if (heroBook) needs.push(["questions", heroBook.domain]);
+  const last = state.questions[state.questions.length - 1];
+  const lastBook = last ? BY_ID.get(last.bookId) : null;
+  if (lastBook) needs.push(["questions", lastBook.domain]);
+  for (const id of state.reading) { const book = BY_ID.get(id); if (book) needs.push(["meta", book.domain]); }
+  return needs;
+}
+function needsWholeCatalog(v) { return Boolean(v.overlay) || v.tab !== "question" || Boolean(questionQuery); }
+function viewReady(v) {
+  if (needsWholeCatalog(v)) return catalogComplete;
+  return homeNeeds().every(([kind, domain]) => isShardReady(kind, domain));
+}
+function ensureView(v) {
+  return needsWholeCatalog(v) ? loadAllShards() : Promise.all(homeNeeds().map(([kind, domain]) => loadShard(kind, domain)));
+}
+function syncTabs(tab) {
+  document.querySelectorAll(".tab").forEach((t) => {
+    if (t.dataset.tab === tab) t.setAttribute("aria-current", "page");
+    else t.removeAttribute("aria-current");
+  });
+}
+let renderToken = 0;
+
 /* ── 전체 렌더 ─────────────────────────────────────── */
 function render() {
   const v = top();
+  if (!viewReady(v)) {
+    // 샤드가 아직 없으면 탭 표시만 맞추고 도착 즉시 다시 그린다. 그 사이 다른 render 가 오면 늦은 쪽은 버린다.
+    syncTabs(v.tab);
+    viewEl.setAttribute("aria-busy", "true");
+    if (needsWholeCatalog(v)) announce("서재를 불러오는 중입니다.");
+    const token = ++renderToken;
+    ensureView(v).then(() => { if (token === renderToken) render(); });
+    return;
+  }
+  viewEl.removeAttribute("aria-busy");
   setOverlayBackgroundInert(Boolean(v.overlay));
-  document.querySelectorAll(".tab").forEach((t) => {
-    if (t.dataset.tab === v.tab) t.setAttribute("aria-current", "page");
-    else t.removeAttribute("aria-current");
-  });
+  syncTabs(v.tab);
   if (v.tab === "question") renderQuestion();
   else if (v.tab === "lineage") renderLineage();
   else if (v.tab === "library") renderLibrary();
@@ -1963,7 +2048,7 @@ document.addEventListener("click", (e) => {
     heroQuestion = drawQuestion();
     save();                                   // 추첨 확정 시점(원장 3). 실패는 save 안에서 배너·낭독으로 알린다
     if (!updateHero()) render();              // 히어로 한 장만 바뀐다 — 화면을 다시 그리지 않는다(원장 20)
-    announce(`다음 질문으로 바꿨습니다. ${heroQuestion.q.text}`);
+    announceHeroQuestion("다음 질문으로 바꿨습니다.");
   } else if (t.dataset.openDomainList) {
     const domain = t.dataset.openDomainList;
     /* 이동이 건 필터는 이번 세션에만 적용한다. 저장된 서재 필터까지 덮어쓰면 방문자가 골라 둔 값이
@@ -2050,6 +2135,12 @@ document.addEventListener("click", (e) => {
 
 function runQuestionSearch(value) {
   const query = String(value).trim();
+  if (query && !catalogComplete) {
+    // 샤드가 다 오기 전에 색인을 만들면 본문 없는 책이 굳는다 — 도착을 기다린 뒤 같은 질문으로 다시 돈다(§7-2 V3b).
+    announce("서재를 불러오는 중입니다. 곧 결과를 보여 드립니다.");
+    loadAllShards().then(() => runQuestionSearch(query));
+    return true;
+  }
   // 공백만 넣고 제출하면 required 를 통과하면서 화면은 아무 반응이 없었다(원장 17).
   questionNotice = query ? "" : "찾을 낱말을 한 글자 이상 적어 주세요.";
   questionQuery = query;
@@ -2168,6 +2259,11 @@ document.addEventListener("input", (e) => {
 
 /* ── 시작 ─────────────────────────────────────────── */
 render();
+// 첫 페인트에 필요한 샤드가 끝난 뒤에야 나머지를 받는다 — 같이 받으면 히어로 샤드와 대역폭을 다툰다(§7-2 V3b).
+ensureView(top()).then(() => {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 50));
+  idle(() => loadAllShards());
+});
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js", { updateViaCache: "none" });
