@@ -595,6 +595,7 @@ const bootTab = TAB_BY_HASH.get(location.hash) || "question";
 const bootHomeUrl = bootTab === "question" ? location.hash || HASH.question : HASH.question;
 let currentView = { tab: "question", overlay: null };
 let pointer = 0;                                  // 히스토리 위치 = state.i. 항목을 잘라내지 않는다(N-2)
+let overlayDepth = 0;                             // 지금 탭 화면 위에 쌓인 오버레이 수(0 = 오버레이 없음)
 history.replaceState({ sentinel: true }, "");     // 종료 트랩(센티널) — 고유 값으로만 식별한다(N-1)
 history.pushState({ i: 0, view: currentView }, "", bootHomeUrl);   // 기본 화면
 if (bootTab !== "question") {
@@ -667,9 +668,11 @@ function readEntry(raw) {
 function pushView(view) {
   const previous = currentView;
   if (view.overlay && !top().overlay) overlayReturnFocus = rememberFocus(document.activeElement);
+  // 탭 화면 위에 쌓인 오버레이 수. 항목마다 실어 두어 뒤로·앞으로 어디에 도착해도 [닫기]가 몇 칸을 걷을지 안다.
+  overlayDepth = view.overlay ? (top().overlay ? overlayDepth + 1 : 1) : 0;
   currentView = view;
   pointer += 1;
-  history.pushState({ i: pointer, view }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
+  history.pushState({ i: pointer, view, depth: overlayDepth }, "", HASH[view.tab]);   // 뷰를 실어 앞으로가기에서 복원한다(N-2)
   rememberTabIndex(view, pointer);
   render();
   // 탭이 바뀌는 이동은 그 화면의 최상단에서 시작한다. 오버레이 push 에는 적용하지 않는다(N-9).
@@ -682,6 +685,16 @@ function top() { return currentView; }
 const tabHistoryIndex = new Map();
 function rememberTabIndex(view, index) {
   if (!view.overlay) tabHistoryIndex.set(view.tab, index);
+}
+
+/* 도착 항목의 오버레이 깊이. 항목이 실은 값을 먼저 쓰고, 없으면 그 탭 항목과의 거리로 잰다.
+   어느 쪽도 성립하지 않으면 1 — 한 칸만 걷으면 센티널을 넘어설 일이 없다(§6-4). */
+function overlayDepthOf(raw, entry) {
+  if (!entry.view.overlay) return 0;
+  const valid = (depth) => Number.isInteger(depth) && depth >= 1 && depth <= entry.i;
+  if (valid(raw?.depth)) return raw.depth;
+  const base = tabHistoryIndex.get(entry.view.tab);
+  return typeof base === "number" && valid(entry.i - base) ? entry.i - base : 1;
 }
 
 /* ── 오버레이 닫힘 단일 경로 (§6-4 N-5·N-6·N-7) ────── */
@@ -752,15 +765,18 @@ document.addEventListener("click", (e) => {
 }, true);
 window.addEventListener("click", () => { tapGesture = null; });
 
-// 배경 탭·닫기 버튼·ESC·저장 후 닫기가 모두 이 함수만 경유한다. history.back() 호출부는 여기 1곳이다.
-function dismissOverlay() {
+/* 배경 탭·닫기·이전·ESC·저장 후 닫기가 모두 이 함수만 경유한다. history.back()·history.go(-n) 호출부는 여기 1곳이다.
+   steps = 걷을 오버레이 수. [이전]·ESC·저장 후 닫기는 1, [닫기]·배경 탭은 쌓인 전부(탭 화면까지)다. */
+function dismissOverlay(steps = 1) {
   if (appClosed) return;
   if (overlayDismissing) return;
   if (!top().overlay) return;
+  const count = Math.min(Math.max(1, steps), Math.max(1, overlayDepth));   // 탭 항목 아래로는 내려가지 않는다
   overlayDismissing = true;
   lockTabbar();
   armTapThrough();
-  history.back();
+  if (count === 1) history.back();
+  else history.go(-count);
 }
 
 window.addEventListener("popstate", (e) => {
@@ -798,6 +814,7 @@ window.addEventListener("popstate", (e) => {
   }
   pointer = entry.i;
   currentView = entry.view;
+  overlayDepth = overlayDepthOf(e.state, entry);
   rememberTabIndex(currentView, pointer);
   if (!entry.known) history.replaceState({ i: pointer, view: currentView }, "");   // 미지 항목 인덱스 재기입(N-3)
   render();
@@ -917,6 +934,13 @@ document.addEventListener("keydown", (e) => {
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
+    return;
+  }
+  // 홈 검색 입력 안의 Esc = [지우기]. 한글 조합 중 Esc 는 조합 취소이므로 건드리지 않는다.
+  if (e.key === "Escape" && !e.isComposing && e.target.id === "question-search"
+    && (e.target.value || questionQuery || questionNotice)) {
+    e.preventDefault();
+    clearQuestionSearch();
   }
 });
 
@@ -1023,8 +1047,11 @@ function questionSearchHtml() {
     ${questionNotice ? `<p class="empty">${esc(questionNotice)}</p>` : ""}
     <form id="question-search-form" class="question-search">
       <label class="sr-only" for="question-search">질문, 제목 또는 저자</label>
-      <input id="question-search" class="search" type="search" minlength="1"
-        placeholder="예: 어떻게 살아야 하는가" value="${esc(questionQuery)}" required>
+      <div class="search-field">
+        <input id="question-search" class="search" type="search" minlength="1"
+          placeholder="예: 어떻게 살아야 하는가" value="${esc(questionQuery)}" required>
+        <button class="search-clear" type="button" data-clear-question-search="1" aria-label="검색어 지우기"${questionQuery || questionNotice ? "" : " hidden"}>지우기</button>
+      </div>
       <button class="btn btn-primary" type="submit">책 찾기</button>
     </form>
     <p class="sr-only" id="question-search-status" role="status" aria-live="polite">${esc(status)}</p>
@@ -1414,6 +1441,18 @@ function renderRecord() {
     ${read.length ? `<p class="section-label">읽은 책 (${read.length}권)</p>` + read.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}`;
 }
 
+/* 시트 머리 — 모든 오버레이가 이 한 곳으로 그린다. 겹친 시트(깊이 2 이상)는 왼쪽에 [이전](한 칸)을 두고
+   [닫기]는 쌓인 전부를 걷는다. 이름이 동작과 같아야 한다 — "닫기"를 눌렀는데 앞 시트가 다시 뜨면 안 된다. */
+function sheetHead(closeLabel) {
+  if (overlayDepth < 2) {
+    return `<div class="sheet-handle"></div>
+        <button class="sheet-close" data-close-overlay="1" aria-label="${closeLabel}">닫기</button>`;
+  }
+  return `<div class="sheet-handle"></div>
+        <button class="sheet-prev" data-prev-overlay="1" aria-label="이전 화면으로">이전</button>
+        <button class="sheet-close" data-close-overlay="1" aria-label="열린 화면 모두 닫기">닫기</button>`;
+}
+
 /* ── 오버레이: 책 상세 시트 (F6) ────────────────────── */
 /* 출처가 제목뿐이거나 "핵심 주제·원리" 일반형이면 이 책 제목의 되풀이다(R6) — 편·장 같은 구체 출처만 돌려준다. 데이터는 그대로다. */
 function specificSource(book, q) {
@@ -1440,8 +1479,7 @@ function renderSheet(bookId) {
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(b.title)} 상세" tabindex="-1">
-        <div class="sheet-handle"></div>
-        <button class="sheet-close" data-close-overlay="1" aria-label="책 상세 닫기">닫기</button>
+        ${sheetHead("책 상세 닫기")}
         ${tierBadge(b)}
         <h2>${esc(b.title)}</h2>
         <p class="meta">${esc(b.author)} · ${esc(b.era)} · ${esc(b.domain)}</p>
@@ -1483,8 +1521,7 @@ function renderTrail(bookId) {
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="뿌리 따라가기" tabindex="-1">
-        <div class="sheet-handle"></div>
-        <button class="sheet-close" data-close-overlay="1" aria-label="뿌리 따라가기 닫기">닫기</button>
+        ${sheetHead("뿌리 따라가기 닫기")}
         <p class="section-label">뿌리 따라가기</p>
         ${steps}
         <div class="trail-end">
@@ -1515,8 +1552,7 @@ function renderJourneyList() {
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 선택" tabindex="-1">
-        <div class="sheet-handle"></div>
-        <button class="sheet-close" data-close-overlay="1" aria-label="여정 선택 닫기">닫기</button>
+        ${sheetHead("여정 선택 닫기")}
         <p class="section-label">질문 여정</p>
         ${JOURNEYS.every((item) => state.journeysDone.some((x) => x.id === item.id))
           // 완주 수치는 홈 스트립이 원천이므로 문구에 넣지 않는다(R6 · 원장 65).
@@ -1554,8 +1590,7 @@ function renderJourneyDetail() {
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 진행" tabindex="-1">
-        <div class="sheet-handle"></div>
-        <button class="sheet-close" data-close-overlay="1" aria-label="여정 진행 닫기">닫기</button>
+        ${sheetHead("여정 진행 닫기")}
         <div class="q-card" style="margin-bottom:12px">
           <p class="q-kicker">${esc(journeyProgressText(j, doneIds))}</p>
           <p class="q-text" style="font-size:19px">${esc(j.question.text)}</p>
@@ -1620,8 +1655,7 @@ function renderProfile() {
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="profile-title" aria-describedby="profile-note" tabindex="-1">
-        <div class="sheet-handle"></div>
-        <button class="sheet-close" data-close-overlay="1" aria-label="내 서재 닫기">닫기</button>
+        ${sheetHead("내 서재 닫기")}
         <h2 id="profile-title">${p ? esc(p.name) + "님의 서재" : "내 서재"}</h2>
         <p class="meta" id="profile-note">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
         <form id="profile-form">
@@ -1646,8 +1680,7 @@ function renderSettings() {
   overlayRoot.innerHTML = `
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
-        <div class="sheet-handle"></div>
-        <button class="sheet-close" data-close-overlay="1" aria-label="설정 닫기">닫기</button>
+        ${sheetHead("설정 닫기")}
         <h2 id="settings-title">설정</h2>
         <p class="meta">고른 값은 이 기기에 저장되어 다음 방문에도 그대로 열립니다.</p>
         <p class="section-label">관심 분야</p>
@@ -1886,7 +1919,7 @@ function resetTabToFirstPage(tab) {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-skip-to],[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-drop-question],[data-drop-confirm],[data-drop-cancel],[data-libdomain],[data-libtier],[data-lib-reset],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-setlibdomain],[data-setlibtier],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
+  const t = e.target.closest("[data-skip-to],[data-home],[data-tab],[data-open-book],[data-collect],[data-shuffle],[data-domain],[data-open-domain-list],[data-progress-domain],[data-ask-term],[data-drop-question],[data-drop-confirm],[data-drop-cancel],[data-libdomain],[data-libtier],[data-lib-reset],[data-load-more],[data-open-trail],[data-cycle-read],[data-goto-lineage],[data-open-jlist],[data-open-jdetail],[data-start-journey],[data-finish-journey],[data-quit-journey],[data-open-profile],[data-clear-profile],[data-toggle-theme],[data-apply-update],[data-close-overlay],[data-prev-overlay],[data-clear-question-search],[data-open-settings],[data-dismiss-onboard],[data-setdomain],[data-setlibdomain],[data-setlibtier],[data-export-records],[data-import-records],[data-reset-records],[data-reset-confirm],[data-reset-cancel]");
   if (!t) return;
 
   if (t.dataset.skipTo) {
@@ -2134,7 +2167,12 @@ document.addEventListener("click", (e) => {
     sessionDomain = t.dataset.gotoLineage;
     pushView({ tab: "lineage", overlay: null });
   } else if (t.dataset.closeOverlay) {
-    if (e.target === t) dismissOverlay(); // 배경 탭·닫기 버튼 = 같은 단일 경로
+    // 배경 탭·닫기 버튼 = 같은 단일 경로. 보이는 시트는 1장이므로 쌓인 전부를 걷어 탭 화면으로 돌아간다.
+    if (e.target === t) dismissOverlay(overlayDepth);
+  } else if (t.dataset.prevOverlay) {
+    dismissOverlay(1);
+  } else if (t.dataset.clearQuestionSearch) {
+    clearQuestionSearch();
   }
 });
 
@@ -2161,6 +2199,24 @@ function runQuestionSearch(value) {
   return true;
 }
 
+/* [지우기]는 지울 것이 있을 때만 보인다 — 입력한 글자, 또는 화면에 남은 결과·빈 결과 안내.
+   입력 중에는 버튼의 hidden 만 바꾼다. 입력 노드를 다시 그리면 한글 조합이 깨진다(C3-2). */
+function syncQuestionClear() {
+  const input = document.getElementById("question-search");
+  const button = viewEl.querySelector("[data-clear-question-search]");
+  if (input && button) button.hidden = !(input.value || questionQuery || questionNotice);
+}
+
+/* 검색 비우기는 방문자가 [지우기]·Esc 로 명시할 때만 일어난다. 홈 탭 재탭은 친 글자를 지우지 않는다(N-11). */
+function clearQuestionSearch() {
+  questionQuery = "";
+  questionResults = [];
+  questionNotice = "";
+  render();
+  clearAnnounce();
+  document.getElementById("question-search")?.focus();
+}
+
 /* 이름 저장은 이 함수 하나를 지난다. 버튼 클릭과 Enter 가 각각 저장하면 이중 실행이 된다(원장 27). */
 function saveProfile(button) {
   const input = document.getElementById("profile-name");
@@ -2180,6 +2236,7 @@ function saveProfile(button) {
 
 // 다시 입력하면 경고를 걷는다 — 고쳐 썼는데 빨간 문구가 남아 있으면 저장이 안 된 줄 안다(원장 28).
 document.addEventListener("input", (e) => {
+  if (e.target.id === "question-search") { syncQuestionClear(); return; }
   if (e.target.id !== "profile-name") return;
   const alertEl = document.getElementById("profile-alert");
   if (alertEl && !alertEl.hidden) {

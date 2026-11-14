@@ -333,6 +333,23 @@ assert.deepEqual(orphanLinks.map((link) => link.url), [],
   assert.ok(shownSources >= 54, `보이는 구체 출처가 ${shownSources}건으로 줄었습니다(하한 54).`);
   const lunyu = BOOKS.find((book) => book.id === "lunyu");
   assert.equal(specificSource(lunyu, { source: "『국가』" }), "『국가』", "다른 책을 가리키는 출처를 숨겼습니다.");
+
+  /* §6-4 N-5 오버레이 닫힘 단일 경로 (흐름 2파도 2026-11-15) — 한 칸(history.back)과 여러 칸(history.go(-n)) 모두
+     dismissOverlay 안에서만 부른다. 겹친 시트의 [닫기]·배경 탭은 쌓인 전부, [이전]·ESC 는 한 칸이다. 동작은 feature-regression overlayDepthClose 가 잰다. */
+  const dismissBody = fnBody("dismissOverlay");
+  const goBackCount = (source) => (source.match(/history\.go\(-/gu) || []).length;
+  assert.equal((appCode.match(/history\.back\(\)/gu) || []).length, 1, "history.back() 호출이 1곳이 아닙니다(N-5).");
+  assert.match(dismissBody, /history\.back\(\)/u, "history.back() 이 dismissOverlay 밖에 있습니다(N-5).");
+  assert.ok(goBackCount(dismissBody) >= 1, "겹친 시트를 모두 닫는 여러 칸 경로가 dismissOverlay 에 없습니다.");
+  assert.equal(goBackCount(appCode), goBackCount(dismissBody) + goBackCount(fnBody("goHome")),
+    "여러 칸 뒤로가기가 dismissOverlay·goHome 밖에 있습니다(N-5 · INV-6).");
+  assert.match(appCode, /t\.dataset\.closeOverlay\) \{\s*if \(e\.target === t\) dismissOverlay\(overlayDepth\)/u,
+    "[닫기]·배경 탭이 쌓인 시트를 모두 닫지 않습니다.");
+  assert.match(appCode, /t\.dataset\.prevOverlay\) \{\s*dismissOverlay\(1\)/u, "[이전]이 한 칸만 돌아가지 않습니다.");
+  assert.equal((appCode.match(/\$\{sheetHead\("[^"]+"\)\}/gu) || []).length, 6, "시트 머리를 sheetHead 밖에서 그리는 오버레이가 있습니다.");
+  assert.equal((appCode.match(/class="sheet-close"/gu) || []).length, 2, "[닫기] 마크업은 sheetHead 의 두 갈래에만 있어야 합니다.");
+  assert.match(css, /\.sheet-close, \.sheet-prev \{[^}]*min-width: 44px; min-height: 44px/u, "[이전]·[닫기] 44px 게이트 누락(§8-1).");
+  assert.match(css, /\.search-clear \{[^}]*min-width: 44px; min-height: 44px/u, "홈 검색 [지우기] 44px 게이트 누락(§8-1).");
 }
 
 const pkg = JSON.parse(await read("package.json"));
@@ -340,4 +357,4 @@ assert.doesNotMatch(pkg.scripts.test, /npm run|pnpm run|yarn/u,
   "테스트 체인이 특정 패키지 매니저 호출에 묶여 있습니다 — 락파일은 pnpm, 내부 호출은 npm 이었습니다(원장 62).");
 assert.ok(pkg.scripts["test:production"], "배포 검사 스크립트가 사라졌습니다.");
 
-console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true, installQuality: true, answerLimitSingleSource: true, skipLinks: true, weeklyQuestions: true, copyRestraint: true }, null, 2));
+console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true, installQuality: true, answerLimitSingleSource: true, skipLinks: true, weeklyQuestions: true, copyRestraint: true, overlayCloseSinglePath: true }, null, 2));

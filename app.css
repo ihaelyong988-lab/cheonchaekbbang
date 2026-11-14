@@ -355,6 +355,15 @@ html:has(#lib-search) { scroll-padding-top: 64px; }
 .library-summary { font-size: 13px; font-weight: 700; color: var(--muted); margin: 0 2px 8px; }
 .question-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
 .question-search .search { margin-bottom: 0; }
+/* [지우기]는 검색 줄 안 오른쪽에 겹친다. 보일 때만 글자 자리를 비운다(브라우저 기본 지우기 표시는 숨겨 한 줄에 둘을 두지 않는다 · R6) */
+.search-field { position: relative; min-width: 0; }
+.search-clear {
+  position: absolute; top: 0; right: 0; min-width: 44px; min-height: 44px; padding: 0 12px;
+  border: 0; background: transparent; color: var(--muted); font-family: var(--sans);
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.search-field:has(.search-clear:not([hidden])) .search { padding-right: 64px; }
+#question-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
 .question-search .btn { min-width: 74px; }
 .question-results { margin-top: 8px; }
 .load-more { width: 100%; margin-top: 4px; }
@@ -446,11 +455,15 @@ html:has(#lib-search) { scroll-padding-top: 64px; }
 }
 .has-overlay { overflow: hidden; }
 .sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--silver-line); margin: 0 auto 8px; }
-.sheet-close {
-  position: absolute; top: 8px; right: 10px; min-width: 44px; min-height: 44px;
+.sheet-close, .sheet-prev {
+  min-width: 44px; min-height: 44px;
   border: 0; background: transparent; color: var(--muted); font-family: var(--sans);
   font-size: 13px; font-weight: 700; cursor: pointer;
 }
+.sheet-close { position: absolute; top: 8px; right: 10px; }
+/* 겹친 시트의 [이전] — [닫기]와 같은 높이(top 8)의 왼쪽. 흐름 안에 두어 첫 내용(배지·제목·라벨)이 그 아래에서 시작한다.
+   손잡이 아래 여백 8 과 위 여백 -16 이 접혀 top 8 이 된다. */
+.sheet-prev { display: block; margin: -16px 0 0 -6px; }
 .sheet h2 { font-size: 19px; font-weight: 700; word-break: keep-all; }
 /* 본문 시작을 당기면서 닫기 버튼(우상단 44px)이 첫 줄 제목과 겹치지 않게 한다 */
 .sheet-close + h2 { padding-right: 48px; }
