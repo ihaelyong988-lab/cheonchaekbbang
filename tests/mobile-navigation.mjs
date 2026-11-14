@@ -1081,7 +1081,7 @@ try {
      상단바 한 줄 · 섹션 라벨 위 간격 단일 값 · 책 카드 높이 · 서재 첫 페이지 길이 · 긴 목록에서도 남는 서재 검색창.
      서재 기준 길이 12,045px 은 2026-11-15 이전(e91a16c) 실측, 9,276px 은 리듬 적용 후 실측이다. */
   const LIBRARY_DOC_BEFORE = 12045;
-  const LIBRARY_DOC_AFTER = 9276;
+  const LIBRARY_DOC_AFTER = 9285;   // 2026-11-15 고정 띠를 실제 상자(.lib-search-bar)로 바꾼 뒤 재측정(+9px)
   const rhythmContext = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 375, height: 812 } });
   const rhythmPage = await rhythmContext.newPage();
   await rhythmPage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
@@ -1137,6 +1137,37 @@ try {
     });
     assert.ok(searchBox.top >= 0 && searchBox.bottom <= searchBox.viewport,
       `서재를 3,000px 내리자 검색창이 화면 밖(${searchBox.top}~${searchBox.bottom}px)으로 사라졌습니다.`);
+    // (f) 고정 띠는 실제 상자다 — 띠를 눌러 그 밑에 가려진 카드가 열리면 안 된다(2026-11-15 적대 검증 W1-02).
+    const bandHits = await rhythmPage.evaluate(() => {
+      const bar = document.querySelector(".lib-search-bar");
+      const input = document.getElementById("lib-search");
+      let hits = 0;
+      let samples = 0;
+      for (let y = 1500; y <= 2600; y += 10) {
+        window.scrollTo(0, y);
+        const inputBottom = input.getBoundingClientRect().bottom;
+        const barBottom = bar.getBoundingClientRect().bottom;
+        for (let py = Math.ceil(inputBottom) + 1; py < barBottom; py += 3) {
+          samples += 1;
+          if (document.elementFromPoint(60, py)?.closest("[data-open-book]")) hits += 1;
+        }
+      }
+      return { hits, samples };
+    });
+    assert.ok(bandHits.samples > 0, "고정 띠 표본이 0개입니다 — 띠 상자(.lib-search-bar)를 찾지 못했습니다.");
+    assert.equal(bandHits.hits, 0, `고정 검색 띠 밑에 가려진 책 카드가 ${bandHits.hits}곳에서 눌립니다.`);
+    // (g) 깊이 내린 채 검색어를 바꾸면 첫 결과가 띠 바로 아래에 보인다(결과 상위가 화면 위로 숨지 않는다).
+    await rhythmPage.evaluate(() => window.scrollTo(0, 3000));
+    await rhythmPage.locator("#lib-search").fill("의");
+    await rhythmPage.waitForTimeout(150);
+    const firstResult = await rhythmPage.evaluate(() => {
+      const bar = document.querySelector(".lib-search-bar").getBoundingClientRect();
+      const card = document.querySelector("#lib-list .card").getBoundingClientRect();
+      return { barBottom: Math.round(bar.bottom), cardTop: Math.round(card.top), viewport: window.innerHeight };
+    });
+    assert.ok(firstResult.cardTop >= firstResult.barBottom && firstResult.cardTop < firstResult.viewport,
+      `깊이 내린 채 검색하자 첫 결과가 ${firstResult.cardTop}px 에 있습니다 — 띠 아래(${firstResult.barBottom}px)에 보여야 합니다.`);
+    await rhythmPage.locator("#lib-search").fill("");
     await rhythmPage.evaluate(() => window.scrollTo(0, 0));
   }
   assert.ok(sectionLabelGaps.length >= 4, `섹션 라벨 간격 표본이 ${sectionLabelGaps.length}개뿐입니다 — 판정할 수 없습니다.`);

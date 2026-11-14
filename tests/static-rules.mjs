@@ -292,15 +292,26 @@ assert.deepEqual(orphanLinks.map((link) => link.url), [],
   assert.deepEqual(sectionLabels.filter((label) => / — /u.test(label)), [], "섹션 라벨에 대시 부연이 있습니다.");
   assert.doesNotMatch(fnBody("lineageLabel"), / — /u, "계보 라벨에 대시 부연이 있습니다.");
   /* "이 기기" 보관 범위 고지 허용 위치 — 4곳뿐이다. 새 고지를 더하지 말고 아래 두 곳을 고친다.
-     ① onboardingHtml 첫 방문 안내(C2-2 · G-12) ② renderSettings 설정 시트 1문장
-     ③ SAVE_FAIL_BANNER ④ LOAD_FAIL_BANNER — 저장을 거부·실패한 주체가 이 기기라는 오류 원인이다. */
+     ① onboardingHtml 첫 방문 안내(C2-2 · G-12) ② renderProfile 이름을 입력하는 자리의 설명 줄(#profile-note)
+     ③ SAVE_FAIL_BANNER ④ LOAD_FAIL_BANNER — 저장을 거부·실패한 주체가 이 기기라는 오류 원인이다.
+     설정 시트는 2026-11-15 적대 검증(W1-04)에서 "고른 값"만 말해 이름·기록의 보관 범위를 알리지 못했다 —
+     고지는 이름을 받는 자리(프로필)에 둔다. */
   const deviceCount = (source) => (source.match(/이 기기/gu) || []).length;
   assert.equal(deviceCount(appCode), 4, `"이 기기" 문구가 허용 위치 4곳과 다릅니다(${deviceCount(appCode)}건).`);
   assert.equal(deviceCount(fnBody("onboardingHtml")), 1, "첫 방문 안내에 보관 범위(이 기기)가 1회 있어야 합니다(C2-2).");
-  assert.equal(deviceCount(fnBody("renderSettings")), 1, "설정 시트의 보관 범위 고지는 1문장이어야 합니다.");
+  assert.equal(deviceCount(fnBody("renderProfile")), 1, "이름을 입력하는 프로필 시트에 보관 범위 고지가 1문장 있어야 합니다.");
+  assert.match(fnBody("renderProfile"), /<p class="meta" id="profile-note">[^<]*이 기기에만[^<]*<\/p>/u, "프로필 설명 줄(#profile-note)이 보관 범위를 말하지 않습니다.");
+  assert.equal(deviceCount(fnBody("renderSettings")), 0, "설정 시트에 보관 범위 고지가 다시 생겼습니다 — 허용 위치는 프로필입니다.");
   assert.match(appCode, /const SAVE_FAIL_BANNER = "이 기기가/u, "저장 거부 배너 원인 문구 누락");
   assert.match(appCode, /const LOAD_FAIL_BANNER = "이 기기에/u, "읽기 실패 배너 원인 문구 누락");
-  assert.equal((appCode.match(/기기에만/gu) || []).length, 1, "\"기기에만\" 고지는 첫 방문 안내 1곳뿐이어야 합니다.");
+  assert.equal((appCode.match(/기기에만/gu) || []).length, 2, "\"기기에만\" 고지는 첫 방문 안내·프로필 2곳이어야 합니다.");
+  // 금지형 "~할 수 있습니다" — 방문자 문구·낭독 전부 0건(헌법 AI 바이브 금지 · W1-07).
+  assert.doesNotMatch(appCode, /수 있습니다/u, "방문자 문구에 \"~수 있습니다\" 가 있습니다.");
+  // 여정 완료 블록은 머리 카드의 질문을 되풀이하지 않는다(R6 · W1-05) — 답칸의 보이는 라벨 1개만 둔다.
+  assert.doesNotMatch(fnBody("journeyDoneHtml"), /j\.question\.text/u, "여정 완료 블록이 머리 카드의 질문을 다시 그립니다(R6).");
+  assert.match(fnBody("journeyDoneHtml"), /<label class="q" for="j-answer">/u, "여정 완료 답칸의 보이는 라벨 누락");
+  // 섹션 라벨이 이미 상태를 말하는 목록(홈 '읽는 중' · 기록 '읽는 중'·'읽은 책')의 카드는 상태 배지를 되풀이하지 않는다(R6 · W1-06).
+  assert.equal((appCode.match(/noPrinciple: true, noStatus: true/gu) || []).length, 3, "상태 섹션 3곳의 카드가 상태 배지를 되풀이합니다.");
   // 첫 방문 안내는 제목 1줄 + 설명 1줄 — 등록 수단(이름 저장)과 보관 범위(이 기기)를 함께 담는다(C2-2).
   const onboard = fnBody("onboardingHtml").match(/<div class="card-title">([^<]+)<\/div>\s*<div class="card-meta">([^<]+)<\/div>/u);
   assert.ok(onboard, "첫 방문 안내의 제목·설명 구조 누락");
@@ -350,6 +361,16 @@ assert.deepEqual(orphanLinks.map((link) => link.url), [],
   assert.equal((appCode.match(/class="sheet-close"/gu) || []).length, 2, "[닫기] 마크업은 sheetHead 의 두 갈래에만 있어야 합니다.");
   assert.match(css, /\.sheet-close, \.sheet-prev \{[^}]*min-width: 44px; min-height: 44px/u, "[이전]·[닫기] 44px 게이트 누락(§8-1).");
   assert.match(css, /\.search-clear \{[^}]*min-width: 44px; min-height: 44px/u, "홈 검색 [지우기] 44px 게이트 누락(§8-1).");
+  // 2026-11-15 1파도 적대 검증 처방 3건(§9 E-045 · E-046)
+  assert.match(css, /@media \(max-width: 299px\) \{\s*\.card-tap:has\(> \.tier\) \{ display: block; \}/u,
+    "200% 확대 폭에서 책 카드 3열 grid 를 풀지 않습니다 — 제목이 한 글자씩 쌓입니다(W1-01).");
+  assert.match(css, /\.lib-search-bar \{[^}]*position: sticky;[^}]*background: var\(--paper\)/u,
+    "서재 고정 검색 띠가 실제 상자가 아닙니다 — 그림자 띠는 눌리지 않아 가려진 카드가 열립니다(W1-02).");
+  assert.doesNotMatch(css, /#lib-search \{[^}]*box-shadow/u, "서재 검색창에 그림자 띠가 남아 있습니다(W1-02).");
+  assert.doesNotMatch(css, /html:has\(#lib-search\) \{ scroll-padding-top/u,
+    "문서 전체 scroll-padding 이 고정 검색창 자신에게 걸려 탭할 때 화면이 튑니다 — 목록 카드의 scroll-margin 으로 둡니다.");
+  assert.match(css, /#lib-list \.card \{ scroll-margin-top: 64px; \}/u, "서재 카드 포커스 가림 방지(scroll-margin-top 64) 누락(§8-1).");
+  assert.match(css, /\.sheet-close \+ \.journey-head \{ margin-top: 40px; \}/u, "여정 진행 머리 카드가 닫기 버튼 영역으로 올라옵니다(W1-03).");
 }
 
 const pkg = JSON.parse(await read("package.json"));

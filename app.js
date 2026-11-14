@@ -979,7 +979,7 @@ function statusBadge(id) {
 function bookCard(b, opts = {}) {
   return `
     <button class="card card-tap ${b.tier === "root" ? "is-root" : ""}" data-open-book="${b.id}">
-      ${tierBadge(b)}${statusBadge(b.id)}
+      ${tierBadge(b)}${opts.noStatus ? "" : statusBadge(b.id)}
       <div class="card-title">${esc(b.title)}</div>
       <div class="card-meta">${esc(b.author)} · ${esc(b.era)} · ${esc(b.domain)}</div>
       ${opts.noPrinciple ? "" : `<div class="card-principle">${esc(b.principle)}</div>`}
@@ -1213,7 +1213,7 @@ function renderQuestion() {
 
     <p class="section-label">질문 여정</p>
     ${journeyHtml}
-    ${readingNow.length ? `<p class="section-label">읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true })).join("") : ""}
+    ${readingNow.length ? `<p class="section-label">읽는 중</p>` + readingNow.map((x) => bookCard(x, { noPrinciple: true, noStatus: true })).join("") : ""}
 
     <p class="section-label">분야별 진행</p>
     <div class="gauge">${gaugeRows}</div>`;
@@ -1288,7 +1288,7 @@ function renderLibrary() {
   viewEl.innerHTML = `
     ${IS_SEED ? `<div class="notice">시드 데이터 ${ALL.length}권 — 정식 천 권 리스트 교체 예정</div>` : ""}
     <p class="library-summary"></p>
-    <input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색">
+    <div class="lib-search-bar"><input class="search" type="search" id="lib-search" placeholder="제목 또는 저자 검색" value="${esc(libQuery)}" aria-label="서재 검색"></div>
     <div class="chips" role="group" aria-label="분야 필터">
       ${["전체", ...DOMAINS].map((d) => `<button class="chip" data-libdomain="${esc(d)}" aria-pressed="${d === libDomain}">${esc(d)}</button>`).join("")}
     </div>
@@ -1331,6 +1331,14 @@ function applyLibQuery(input) {
   libQuery = input.value;
   libVisibleCount = LIB_PAGE_SIZE;
   renderLibList();
+  /* 목록을 깊이 내린 채 고정 검색창에서 검색어를 바꾸면 결과 상위가 화면 위로 숨는다 —
+     목록 머리가 띠 위로 올라가 있으면 띠 바로 아래로 당긴다. 위에 있지 않으면 움직이지 않는다. */
+  const list = document.getElementById("lib-list");
+  const bar = input.closest(".lib-search-bar");
+  if (list && bar) {
+    const hidden = bar.getBoundingClientRect().bottom - list.getBoundingClientRect().top;
+    if (hidden > 0) window.scrollBy(0, -hidden);
+  }
 }
 
 /* ── 탭: 기록 ─────────────────────────────────────── */
@@ -1436,9 +1444,9 @@ function renderRecord() {
     <p class="section-label">계보 진행률</p>
     <div class="card">${domainRows}</div>
     <p class="section-label">나만의 문답집</p>
-    ${qa || jqa ? jqa + qa : `<p class="empty">수집한 질문이 아직 없습니다.</p>`}
-    ${reading.length ? `<p class="section-label">읽는 중 (${reading.length}권)</p>` + reading.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}
-    ${read.length ? `<p class="section-label">읽은 책 (${read.length}권)</p>` + read.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}`;
+    ${qa || jqa ? jqa + qa : `<p class="empty">질문 옆 [수집]을 누르면 여기에 모입니다.</p>`}
+    ${reading.length ? `<p class="section-label">읽는 중 (${reading.length}권)</p>` + reading.map((b) => bookCard(b, { noPrinciple: true, noStatus: true })).join("") : ""}
+    ${read.length ? `<p class="section-label">읽은 책 (${read.length}권)</p>` + read.map((b) => bookCard(b, { noPrinciple: true, noStatus: true })).join("") : ""}`;
 }
 
 /* 시트 머리 — 모든 오버레이가 이 한 곳으로 그린다. 겹친 시트(깊이 2 이상)는 왼쪽에 [이전](한 칸)을 두고
@@ -1558,7 +1566,7 @@ function renderJourneyList() {
           // 완주 수치는 홈 스트립이 원천이므로 문구에 넣지 않는다(R6 · 원장 65).
           ? `<div class="notice">모든 갈래의 질문을 지나 왔습니다. 남긴 답은 기록 탭 문답집에 그대로 있습니다.</div>`
           : ""}
-        ${state.journey ? `<div class="notice">진행 중인 여정을 완료한 뒤 새 여정을 시작할 수 있습니다.</div>` : ""}
+        ${state.journey ? `<div class="notice">진행 중인 여정을 마치면 새 여정이 열립니다.</div>` : ""}
         ${items}
       </div>
     </div>`;
@@ -1591,7 +1599,7 @@ function renderJourneyDetail() {
     <div class="sheet-backdrop" data-close-overlay="1">
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 진행" tabindex="-1">
         ${sheetHead("여정 진행 닫기")}
-        <div class="q-card" style="margin-bottom:12px">
+        <div class="q-card journey-head">
           <p class="q-kicker">${esc(journeyProgressText(j, doneIds))}</p>
           <p class="q-text" style="font-size:19px">${esc(j.question.text)}</p>
           <p class="q-source">${esc(j.question.source)}</p>
@@ -1617,8 +1625,7 @@ function journeyDoneHtml(j, allDone) {
   return `
     <div class="journey-done">
       <p class="q-kicker">여정 완료</p>
-      <p class="q">${esc(j.question.text)}</p>
-      <label class="sr-only" for="j-answer">이 질문에 대한 나의 답</label>
+      <label class="q" for="j-answer">이 질문에 대한 나의 답</label>
       <textarea id="j-answer" data-answer-draft="1" maxlength="${ANSWER_MAX}"
         placeholder="나의 답">${esc(state.journeyDraft)}</textarea>
       <div class="sheet-actions">
@@ -1657,7 +1664,7 @@ function renderProfile() {
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="profile-title" aria-describedby="profile-note" tabindex="-1">
         ${sheetHead("내 서재 닫기")}
         <h2 id="profile-title">${p ? esc(p.name) + "님의 서재" : "내 서재"}</h2>
-        <p class="meta" id="profile-note">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
+        <p class="meta" id="profile-note">이름은 이 기기에만 저장됩니다.</p>
         <form id="profile-form">
           <input class="profile-input" id="profile-name" type="text" maxlength="20"
             placeholder="이름 또는 별명" value="${p ? esc(p.name) : ""}" aria-label="이름"
@@ -1682,7 +1689,7 @@ function renderSettings() {
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabindex="-1">
         ${sheetHead("설정 닫기")}
         <h2 id="settings-title">설정</h2>
-        <p class="meta">고른 값은 이 기기에 저장되어 다음 방문에도 그대로 열립니다.</p>
+        <p class="meta">고른 값은 다음 방문에도 그대로 열립니다.</p>
         <p class="section-label">관심 분야</p>
         <div class="chips" role="group" aria-label="관심 분야 선택">
           ${DOMAINS.map((d) => `<button class="chip" data-setdomain="${esc(d)}" aria-pressed="${d === sessionDomain}">${esc(d)}</button>`).join("")}
@@ -2078,7 +2085,7 @@ document.addEventListener("click", (e) => {
       /* 첫 기록이면 안내 카드가 사라지고 최근 질문 블록이 새로 생긴다 — 구조가 바뀌는 그때만 전체 렌더다.
          그 밖에는 제자리에서 고쳐 방금 누른 버튼을 살려 둔다(원장 20). */
       if (!updateHero() || !updateRecentQuestion()) render();
-      announce("질문을 수집했습니다. 기록 탭 문답집에서 답을 적을 수 있습니다.");
+      announce("질문을 수집했습니다. 답은 기록 탭 문답집에 적습니다.");
       return;
     }
     render();

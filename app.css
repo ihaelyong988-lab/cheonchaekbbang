@@ -270,6 +270,13 @@ body {
 .card-tap:has(> .tier) > .card-title { grid-column: 2; grid-row: 1; word-break: keep-all; overflow-wrap: anywhere; }
 .card-tap:has(> .tier) > .badge-read,
 .card-tap:has(> .tier) > .badge-reading { grid-column: 3; grid-row: 1; margin-left: 0; }
+/* 200% 확대 대체 폭(≤299px)에서는 3열이 제목 열을 24px 까지 짓눌러 한 글자씩 쌓인다 — 쌓는 배치로 돌아간다 */
+@media (max-width: 299px) {
+  .card-tap:has(> .tier) { display: block; }
+  .card-tap:has(> .tier) > .tier { margin-bottom: 4px; }
+  .card-tap:has(> .tier) > .badge-read,
+  .card-tap:has(> .tier) > .badge-reading { margin-left: 4px; }
+}
 
 /* 첫 방문 1회 안내 — 히어로 직후, 카드 토큰 재사용 (§2-1 C2-2) */
 .onboard { background: var(--silver); border-color: var(--silver-line); }
@@ -343,15 +350,17 @@ body {
   background: var(--card); color: var(--ink); margin-bottom: 8px;
 }
 .search::placeholder { color: var(--muted); }
-/* 서재 검색창은 긴 목록을 내려도 화면에 남는다. 감싸는 마크업 없이 그림자 2겹으로 띠를 만든다:
-   바탕색 8px 띠(아래로 지나가는 카드를 가린다) + 그 아래 1px 경계선. 오버레이(30)·종료 팝업(50)·탭바(20)보다 낮다.
-   top 0 이라 위쪽 띠는 화면 밖이다 — 띠 밑에 완전히 가려진 카드가 생기지 않는다(그림자는 눌리지 않는다). */
-#lib-search {
+/* 서재 검색창은 긴 목록을 내려도 화면에 남는다. 띠는 그림자가 아니라 실제 상자다 — 그림자는 눌리지 않아
+   띠 밑에 가려진 카드가 열렸다(§9 E-036 · E-045). 오버레이(30)·종료 팝업(50)·탭바(20)보다 낮다. */
+.lib-search-bar {
   position: sticky; top: 0; z-index: 1;
-  box-shadow: 0 0 0 8px var(--paper), 0 9px 0 0 var(--line);
+  background: var(--paper); border-bottom: 1px solid var(--line);
+  margin: 0 -8px 8px; padding: 0 8px 8px;
 }
-/* 키보드로 옮긴 포커스가 고정 띠(44+8+1) 밑에 가리지 않는다 (WCAG 2.4.11) */
-html:has(#lib-search) { scroll-padding-top: 64px; }
+.lib-search-bar .search { margin-bottom: 0; }
+/* 키보드로 옮긴 포커스가 고정 띠(44+8+1) 밑에 가리지 않는다 (WCAG 2.4.11). 문서 전체 scroll-padding 은
+   고정된 검색창 자신에게도 걸려 탭할 때 화면이 수백 px 튀었다 — 목록 카드에만 건다. */
+#lib-list .card { scroll-margin-top: 64px; }
 .library-summary { font-size: 13px; font-weight: 700; color: var(--muted); margin: 0 2px 8px; }
 .question-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
 .question-search .search { margin-bottom: 0; }
@@ -467,6 +476,10 @@ html:has(#lib-search) { scroll-padding-top: 64px; }
 .sheet h2 { font-size: 19px; font-weight: 700; word-break: keep-all; }
 /* 본문 시작을 당기면서 닫기 버튼(우상단 44px)이 첫 줄 제목과 겹치지 않게 한다 */
 .sheet-close + h2 { padding-right: 48px; }
+/* 여정 진행 머리 카드는 시트 첫 내용이다 — 닫기 버튼(top 8 + 44 = 52) 아래 4px 에서 시작해야 '닫기' 글자가 카드에 걸치지 않는다.
+   손잡이 아래 여백 8 과 접히므로 12(시트 위 여백) + 4(손잡이) + 40 = 56 이다. */
+.journey-head { margin-bottom: 12px; }
+.sheet-close + .journey-head { margin-top: 40px; }
 .sheet .meta { font-size: 13.5px; color: var(--muted); }
 .principle-box {
   font-family: var(--serif); font-size: 15.5px; word-break: keep-all;
