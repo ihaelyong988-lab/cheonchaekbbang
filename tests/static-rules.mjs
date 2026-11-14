@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative) => readFile(path.join(ROOT, relative), "utf8");
@@ -262,9 +262,125 @@ const orphanLinks = linkRegistry.links.filter((link) => !foundLinks.has(link.url
 assert.deepEqual(orphanLinks.map((link) => link.url), [],
   "코드에서 사라진 URL 이 등록부에 남아 있습니다 — 등록을 지우세요.");
 
+/* 문장 절제 (주인님 지시 2026-11-15 "방문자의 관점에서 필요 이상의 내용과 문장은 삭제") — 화면이 이미 보여 주는 사실,
+   한 화면에 두 번 나오는 정보(R6), 라벨·버튼 안 대시·괄호 부연을 되살리지 않는다. 판정은 주석을 걷은 코드로 한다. */
+{
+  const appCode = app.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/<!--[\s\S]*?-->/gu, "").replace(/(^|[ \t])\/\/[^\n]*/gmu, "$1");
+  assert.ok(appCode.includes("function renderSheet(") && appCode.includes("읽음 상태: ${stLabel}"), "주석 제거가 코드까지 지웠습니다.");
+  const fnBody = (name) => {
+    const start = appCode.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `추출 실패: function ${name}`);
+    let depth = 0, i = appCode.indexOf("{", start);
+    for (; i < appCode.length; i += 1) {
+      if (appCode[i] === "{") depth += 1;
+      else if (appCode[i] === "}" && --depth === 0) break;
+    }
+    return appCode.slice(start, i + 1);
+  };
+  for (const removed of ["(탭하여 변경)", "개인 기록 전용", "(읽음 기준)", "— 뿌리에서 가지로", "뿌리 고전입니다", "하나의 질문, 뿌리에서 가지까지",
+    "— 가지에서 뿌리로", "— 이 질문에 대한 나의 답은", "내보낸 파일은 이 기기 안에서만", "기록과 이름은 이 기기에만", "밖으로 나가지 않습니다",
+    "이 기기가 읽은 자리", "(기기에만 보관)", "이 기기에 남아 있던", "엑셀 원문 표기를 보존", "아래 낱말로 다시 물어볼",
+    "이번 주의 질문에서 시작해 보세요", "아래 읽은 책에서 이어 봅니다", "책으로 이어질 질문", ">질문 하기<"]) {
+    assert.ok(!appCode.includes(removed), `지운 문구가 되살아났습니다: ${removed}`);
+  }
+  // 버튼·섹션 라벨은 이름만 둔다. 수집 건수 하한은 정규식이 템플릿을 실제로 읽는지 보는 장치다(빈 통과 방지).
+  const buttonLabels = [...appCode.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((m) => m[1].trim()).filter(Boolean);
+  assert.ok(buttonLabels.length >= 20, `버튼 라벨이 ${buttonLabels.length}건만 잡혔습니다 — 정규식이 템플릿을 못 읽습니다.`);
+  assert.deepEqual(buttonLabels.filter((label) => / — |\(탭/u.test(label)), [], "버튼 라벨에 대시·괄호 부연이 있습니다.");
+  const sectionLabels = [...appCode.matchAll(/<p class="section-label">([^<]*)<\/p>/gu)].map((m) => m[1]);
+  assert.ok(sectionLabels.length >= 15, `섹션 라벨이 ${sectionLabels.length}건만 잡혔습니다.`);
+  assert.deepEqual(sectionLabels.filter((label) => / — /u.test(label)), [], "섹션 라벨에 대시 부연이 있습니다.");
+  assert.doesNotMatch(fnBody("lineageLabel"), / — /u, "계보 라벨에 대시 부연이 있습니다.");
+  /* "이 기기" 보관 범위 고지 허용 위치 — 4곳뿐이다. 새 고지를 더하지 말고 아래 두 곳을 고친다.
+     ① onboardingHtml 첫 방문 안내(C2-2 · G-12) ② renderProfile 이름을 입력하는 자리의 설명 줄(#profile-note)
+     ③ SAVE_FAIL_BANNER ④ LOAD_FAIL_BANNER — 저장을 거부·실패한 주체가 이 기기라는 오류 원인이다.
+     설정 시트는 2026-11-15 적대 검증(W1-04)에서 "고른 값"만 말해 이름·기록의 보관 범위를 알리지 못했다 —
+     고지는 이름을 받는 자리(프로필)에 둔다. */
+  const deviceCount = (source) => (source.match(/이 기기/gu) || []).length;
+  assert.equal(deviceCount(appCode), 4, `"이 기기" 문구가 허용 위치 4곳과 다릅니다(${deviceCount(appCode)}건).`);
+  assert.equal(deviceCount(fnBody("onboardingHtml")), 1, "첫 방문 안내에 보관 범위(이 기기)가 1회 있어야 합니다(C2-2).");
+  assert.equal(deviceCount(fnBody("renderProfile")), 1, "이름을 입력하는 프로필 시트에 보관 범위 고지가 1문장 있어야 합니다.");
+  assert.match(fnBody("renderProfile"), /<p class="meta" id="profile-note">[^<]*이 기기에만[^<]*<\/p>/u, "프로필 설명 줄(#profile-note)이 보관 범위를 말하지 않습니다.");
+  assert.equal(deviceCount(fnBody("renderSettings")), 0, "설정 시트에 보관 범위 고지가 다시 생겼습니다 — 허용 위치는 프로필입니다.");
+  assert.match(appCode, /const SAVE_FAIL_BANNER = "이 기기가/u, "저장 거부 배너 원인 문구 누락");
+  assert.match(appCode, /const LOAD_FAIL_BANNER = "이 기기에/u, "읽기 실패 배너 원인 문구 누락");
+  assert.equal((appCode.match(/기기에만/gu) || []).length, 2, "\"기기에만\" 고지는 첫 방문 안내·프로필 2곳이어야 합니다.");
+  // 금지형 "~할 수 있습니다" — 방문자 문구·낭독 전부 0건(헌법 AI 바이브 금지 · W1-07).
+  assert.doesNotMatch(appCode, /수 있습니다/u, "방문자 문구에 \"~수 있습니다\" 가 있습니다.");
+  // 여정 완료 블록은 머리 카드의 질문을 되풀이하지 않는다(R6 · W1-05) — 답칸의 보이는 라벨 1개만 둔다.
+  assert.doesNotMatch(fnBody("journeyDoneHtml"), /j\.question\.text/u, "여정 완료 블록이 머리 카드의 질문을 다시 그립니다(R6).");
+  assert.match(fnBody("journeyDoneHtml"), /<label class="q" for="j-answer">/u, "여정 완료 답칸의 보이는 라벨 누락");
+  // 섹션 라벨이 이미 상태를 말하는 목록(홈 '읽는 중' · 기록 '읽는 중'·'읽은 책')의 카드는 상태 배지를 되풀이하지 않는다(R6 · W1-06).
+  assert.equal((appCode.match(/noPrinciple: true, noStatus: true/gu) || []).length, 3, "상태 섹션 3곳의 카드가 상태 배지를 되풀이합니다.");
+  // 첫 방문 안내는 제목 1줄 + 설명 1줄 — 등록 수단(이름 저장)과 보관 범위(이 기기)를 함께 담는다(C2-2).
+  const onboard = fnBody("onboardingHtml").match(/<div class="card-title">([^<]+)<\/div>\s*<div class="card-meta">([^<]+)<\/div>/u);
+  assert.ok(onboard, "첫 방문 안내의 제목·설명 구조 누락");
+  assert.ok(onboard[1].includes("이름") && onboard[1].length <= 24, `첫 방문 안내 제목은 이름 저장을 24자 이내로 말해야 합니다: ${onboard[1]}`);
+  assert.ok(onboard[2].includes("이 기기에만") && onboard[2].length <= 24, `첫 방문 안내 설명은 보관 범위를 24자 이내로 말해야 합니다: ${onboard[2]}`);
+  assert.match(fnBody("onboardingHtml"), /data-open-profile="1"/u, "첫 방문 안내에 이름 저장 진입 버튼이 없습니다.");
+  // 홈 검색은 질문뿐 아니라 제목·저자도 찾는다 — 라벨이 실제 범위를 말해야 한다.
+  assert.match(fnBody("questionSearchHtml"), /<p class="section-label">[^<]*제목[^<]*저자[^<]*<\/p>/u, "홈 검색 라벨이 제목·저자 검색을 말하지 않습니다.");
+  assert.match(fnBody("questionSearchHtml"), /<label class="sr-only" for="question-search">[^<]*제목[^<]*저자[^<]*<\/label>/u,
+    "홈 검색 입력의 접근 이름이 제목·저자 검색을 말하지 않습니다.");
+  // 책 시트: 읽음 상태는 순환 버튼 한 곳이 원천이다 — 머리 배지와 같이 두면 한 화면에 두 번이다(R6).
+  assert.doesNotMatch(fnBody("renderSheet"), /statusBadge\(/u, "책 시트에 읽음 배지와 읽음 상태 버튼이 함께 있습니다(R6).");
+  /* 질문 출처 — "『제목』의 핵심 주제" 같은 일반형은 책 시트에서 제목의 되풀이다. 구체 출처(편·장)만 보이고, 책이 달리 식별되지
+     않는 문답집에서는 일반형 대신 제목만 남긴다. 판정은 낱말 잔여물로 독립 계산해 두 방향(숨김·노출)을 모두 대조한다. */
+  assert.doesNotMatch(fnBody("renderSheet"), /esc\(q\.source\)/u, "책 시트가 출처를 거르지 않고 그립니다.");
+  assert.doesNotMatch(fnBody("renderRecord"), /esc\(qObj\.source\)/u, "문답집이 일반형 출처를 그대로 그립니다.");
+  const specificSource = new Function(`${fnBody("specificSource")}\nreturn specificSource;`)();
+  const { BOOKS } = await import(pathToFileURL(path.join(ROOT, "data/books.js")).href);
+  const residue = (book, source) => source.replace(/『([^』]+)』/gu, (all, title) => (book.title.includes(title) ? "" : all))
+    .replace(/의|핵심|주제와|주제|원리|기반|자체|질문|\s/gu, "");
+  let shownSources = 0;
+  const misjudged = [];
+  for (const book of BOOKS) for (const question of book.questions) {
+    const shown = Boolean(specificSource(book, question));
+    if (shown) shownSources += 1;
+    if (shown !== Boolean(residue(book, question.source))) misjudged.push(`${book.id}: ${question.source}`);
+  }
+  assert.deepEqual(misjudged, [], "출처 판정이 어긋났습니다 — 구체 출처를 숨기거나 일반형을 보입니다.");
+  // 손실 계수 — 2026-11-15 구체 출처 54건(전체 665건 중). 이보다 줄면 거르기가 구체 출처를 먹은 것이다.
+  assert.ok(shownSources >= 54, `보이는 구체 출처가 ${shownSources}건으로 줄었습니다(하한 54).`);
+  const lunyu = BOOKS.find((book) => book.id === "lunyu");
+  assert.equal(specificSource(lunyu, { source: "『국가』" }), "『국가』", "다른 책을 가리키는 출처를 숨겼습니다.");
+
+  /* §6-4 N-5 오버레이 닫힘 단일 경로 (흐름 2파도 2026-11-15) — 한 칸(history.back)과 여러 칸(history.go(-n)) 모두
+     dismissOverlay 안에서만 부른다. 겹친 시트의 [닫기]·배경 탭은 쌓인 전부, [이전]·ESC 는 한 칸이다. 동작은 feature-regression overlayDepthClose 가 잰다. */
+  const dismissBody = fnBody("dismissOverlay");
+  const goBackCount = (source) => (source.match(/history\.go\(-/gu) || []).length;
+  assert.equal((appCode.match(/history\.back\(\)/gu) || []).length, 1, "history.back() 호출이 1곳이 아닙니다(N-5).");
+  assert.match(dismissBody, /history\.back\(\)/u, "history.back() 이 dismissOverlay 밖에 있습니다(N-5).");
+  assert.ok(goBackCount(dismissBody) >= 1, "겹친 시트를 모두 닫는 여러 칸 경로가 dismissOverlay 에 없습니다.");
+  assert.equal(goBackCount(appCode), goBackCount(dismissBody) + goBackCount(fnBody("goHome")),
+    "여러 칸 뒤로가기가 dismissOverlay·goHome 밖에 있습니다(N-5 · INV-6).");
+  assert.match(appCode, /t\.dataset\.closeOverlay\) \{\s*if \(e\.target === t\) dismissOverlay\(t\.classList\.contains\("sheet-backdrop"\) \? 1 : overlayDepth\)/u,
+    "[닫기]는 쌓인 전부, 배경 탭은 한 칸이어야 합니다(N-13 · §9 E-051).");
+  assert.doesNotMatch(fnBody("overlayDepthOf"), /tabHistoryIndex/u, "깊이를 탭 인덱스 거리로 추정합니다 — 낡은 기준에서 과다 뒤로가 생깁니다(§9 E-052).");
+  assert.match(css, /@media \(max-width: 279px\) \{\s*\.question-search \{ grid-template-columns: 1fr; \}/u,
+    "200% 확대 폭에서 홈 검색 [지우기]가 입력 글자 칸을 덮습니다(§9 E-053).");
+  assert.match(css, /\.sheet-handle \+ \.sheet-close \+ \.journey-head \{ margin-top: 40px; \}/u, "여정 머리 카드 40px 은 깊이 1 시트에만 적용해야 합니다.");
+  assert.match(appCode, /t\.dataset\.prevOverlay\) \{\s*dismissOverlay\(1\)/u, "[이전]이 한 칸만 돌아가지 않습니다.");
+  assert.equal((appCode.match(/\$\{sheetHead\("[^"]+"\)\}/gu) || []).length, 6, "시트 머리를 sheetHead 밖에서 그리는 오버레이가 있습니다.");
+  assert.equal((appCode.match(/class="sheet-close"/gu) || []).length, 2, "[닫기] 마크업은 sheetHead 의 두 갈래에만 있어야 합니다.");
+  assert.match(css, /\.sheet-close, \.sheet-prev \{[^}]*min-width: 44px; min-height: 44px/u, "[이전]·[닫기] 44px 게이트 누락(§8-1).");
+  assert.match(css, /\.search-clear \{[^}]*min-width: 44px; min-height: 44px/u, "홈 검색 [지우기] 44px 게이트 누락(§8-1).");
+  // 2026-11-15 1파도 적대 검증 처방 3건(§9 E-045 · E-046)
+  assert.match(css, /@media \(max-width: 299px\) \{\s*\.card-tap:has\(> \.tier\) \{ display: block; \}/u,
+    "200% 확대 폭에서 책 카드 3열 grid 를 풀지 않습니다 — 제목이 한 글자씩 쌓입니다(W1-01).");
+  assert.match(css, /\.lib-search-bar \{[^}]*position: sticky;[^}]*background: var\(--paper\)/u,
+    "서재 고정 검색 띠가 실제 상자가 아닙니다 — 그림자 띠는 눌리지 않아 가려진 카드가 열립니다(W1-02).");
+  assert.doesNotMatch(css, /#lib-search \{[^}]*box-shadow/u, "서재 검색창에 그림자 띠가 남아 있습니다(W1-02).");
+  assert.doesNotMatch(css, /html:has\(#lib-search\) \{ scroll-padding-top/u,
+    "문서 전체 scroll-padding 이 고정 검색창 자신에게 걸려 탭할 때 화면이 튑니다 — 목록 카드의 scroll-margin 으로 둡니다.");
+  assert.match(css, /#lib-list \.card \{ scroll-margin-top: 64px; \}/u, "서재 카드 포커스 가림 방지(scroll-margin-top 64) 누락(§8-1).");
+  assert.match(css, /\.sheet-close \+ \.journey-head \{ margin-top: 40px; \}/u, "여정 진행 머리 카드가 닫기 버튼 영역으로 올라옵니다(W1-03).");
+  assert.doesNotMatch(css, /\n\.sheet-close \+ \.journey-head/u, "여정 머리 카드 40px 이 겹친 시트에도 걸립니다 — [이전] 줄 아래 40px 이 더해집니다.");
+}
+
 const pkg = JSON.parse(await read("package.json"));
 assert.doesNotMatch(pkg.scripts.test, /npm run|pnpm run|yarn/u,
   "테스트 체인이 특정 패키지 매니저 호출에 묶여 있습니다 — 락파일은 pnpm, 내부 호출은 npm 이었습니다(원장 62).");
 assert.ok(pkg.scripts["test:production"], "배포 검사 스크립트가 사라졌습니다.");
 
-console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true, installQuality: true, answerLimitSingleSource: true, skipLinks: true, weeklyQuestions: true }, null, 2));
+console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true, installQuality: true, answerLimitSingleSource: true, skipLinks: true, weeklyQuestions: true, copyRestraint: true, overlayCloseSinglePath: true }, null, 2));

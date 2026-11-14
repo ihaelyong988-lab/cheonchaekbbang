@@ -1077,6 +1077,104 @@ try {
   assert.equal(await currentTab(exit.probePage), "홈", "다시 열기가 앱을 복구하지 못했습니다.");
   await exit.probeContext.close();
 
+  /* [G-18] 세로 여백 리듬 (§4-6 · 2026-11-15 지시 "세로 여백 균형감 있게 최소화") — 375x812 · 은회 · 첫 방문.
+     상단바 한 줄 · 섹션 라벨 위 간격 단일 값 · 책 카드 높이 · 서재 첫 페이지 길이 · 긴 목록에서도 남는 서재 검색창.
+     서재 기준 길이 12,045px 은 2026-11-15 이전(e91a16c) 실측, 9,276px 은 리듬 적용 후 실측이다. */
+  const LIBRARY_DOC_BEFORE = 12045;
+  const LIBRARY_DOC_AFTER = 9285;   // 2026-11-15 고정 띠를 실제 상자(.lib-search-bar)로 바꾼 뒤 재측정(+9px)
+  const rhythmContext = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 375, height: 812 } });
+  const rhythmPage = await rhythmContext.newPage();
+  await rhythmPage.goto(`${baseURL}/`, { waitUntil: "networkidle" });
+  await rhythmPage.evaluate(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((name) => caches.delete(name)));
+    localStorage.clear();
+  });
+  await rhythmPage.reload({ waitUntil: "networkidle" });
+  const topbarHeight = await rhythmPage.evaluate(() => document.querySelector(".topbar").getBoundingClientRect().height);
+  assert.ok(topbarHeight <= 60, `상단바가 ${topbarHeight}px 입니다 — 한 줄(44px 컨트롤 + 위아래 여백) 60px 이하여야 합니다(§4-6).`);
+  // 라벨 바로 앞의 흐름 안 요소(높이 있음)까지의 실측 간격. sr-only 상태 문구·빈 컨테이너는 건너뛰고, 첫 자식 라벨은 간격이 없다.
+  const sectionLabelGaps = [];
+  for (const tab of ["question", "lineage", "library", "record"]) {
+    if (tab !== "question") {
+      await rhythmPage.locator(`.tab[data-tab="${tab}"]`).click();
+      await rhythmPage.waitForTimeout(250);
+    }
+    const gaps = await rhythmPage.evaluate(() => [...document.querySelectorAll("#view .section-label")].map((label) => {
+      let previous = label.previousElementSibling;
+      while (previous && (["absolute", "fixed"].includes(getComputedStyle(previous).position)
+        || previous.getBoundingClientRect().height === 0)) previous = previous.previousElementSibling;
+      return previous ? Math.round(label.getBoundingClientRect().top - previous.getBoundingClientRect().bottom) : null;
+    }).filter((gap) => gap !== null));
+    sectionLabelGaps.push(...gaps.map((gap) => `${tab}:${gap}`));
+    if (tab !== "library") continue;
+    const library = await rhythmPage.evaluate(() => {
+      const cards = [...document.querySelectorAll("#lib-list > .card")];
+      const rootCard = cards.find((card) => {
+        const principle = card.querySelector(".card-principle");
+        return card.classList.contains("is-root") && principle
+          && principle.getBoundingClientRect().height < Number.parseFloat(getComputedStyle(principle).lineHeight) * 1.5;
+      });
+      return {
+        cards: cards.length,
+        rootCard: rootCard ? Math.round(rootCard.getBoundingClientRect().height) : null,
+        document: document.documentElement.scrollHeight,
+      };
+    });
+    assert.equal(library.cards, 80, "서재 첫 페이지 카드 수가 80장이 아닙니다 — 길이 비교의 전제가 깨졌습니다.");
+    assert.ok(library.rootCard !== null, "원칙이 한 줄인 뿌리 카드를 찾지 못했습니다(카드 행간이 수치가 아닙니다).");
+    assert.ok(library.rootCard <= 104, `서재 뿌리 카드(원칙 1줄)가 ${library.rootCard}px 입니다 — 104px 이하여야 합니다.`);
+    const libraryLimit = Math.min(LIBRARY_DOC_BEFORE * 0.8, LIBRARY_DOC_AFTER * 1.03);
+    assert.ok(library.document <= libraryLimit,
+      `서재 첫 페이지가 ${library.document}px 입니다 — 상한 ${Math.round(libraryLimit)}px(이전 ${LIBRARY_DOC_BEFORE}px 의 80% · 적용 후 ${LIBRARY_DOC_AFTER}px + 3%).`);
+    await rhythmPage.evaluate(() => window.scrollTo(0, 3000));
+    await rhythmPage.waitForTimeout(150);
+    const searchBox = await rhythmPage.evaluate(() => {
+      const rect = document.getElementById("lib-search").getBoundingClientRect();
+      return { top: Math.round(rect.top), bottom: Math.round(rect.bottom), viewport: window.innerHeight };
+    });
+    assert.ok(searchBox.top >= 0 && searchBox.bottom <= searchBox.viewport,
+      `서재를 3,000px 내리자 검색창이 화면 밖(${searchBox.top}~${searchBox.bottom}px)으로 사라졌습니다.`);
+    // (f) 고정 띠는 실제 상자다 — 띠를 눌러 그 밑에 가려진 카드가 열리면 안 된다(2026-11-15 적대 검증 W1-02).
+    const bandHits = await rhythmPage.evaluate(() => {
+      const bar = document.querySelector(".lib-search-bar");
+      const input = document.getElementById("lib-search");
+      let hits = 0;
+      let samples = 0;
+      for (let y = 1500; y <= 2600; y += 10) {
+        window.scrollTo(0, y);
+        const inputBottom = input.getBoundingClientRect().bottom;
+        const barBottom = bar.getBoundingClientRect().bottom;
+        for (let py = Math.ceil(inputBottom) + 1; py < barBottom; py += 3) {
+          samples += 1;
+          if (document.elementFromPoint(60, py)?.closest("[data-open-book]")) hits += 1;
+        }
+      }
+      return { hits, samples };
+    });
+    assert.ok(bandHits.samples > 0, "고정 띠 표본이 0개입니다 — 띠 상자(.lib-search-bar)를 찾지 못했습니다.");
+    assert.equal(bandHits.hits, 0, `고정 검색 띠 밑에 가려진 책 카드가 ${bandHits.hits}곳에서 눌립니다.`);
+    // (g) 깊이 내린 채 검색어를 바꾸면 첫 결과가 띠 바로 아래에 보인다(결과 상위가 화면 위로 숨지 않는다).
+    await rhythmPage.evaluate(() => window.scrollTo(0, 3000));
+    await rhythmPage.locator("#lib-search").fill("의");
+    await rhythmPage.waitForTimeout(150);
+    const firstResult = await rhythmPage.evaluate(() => {
+      const bar = document.querySelector(".lib-search-bar").getBoundingClientRect();
+      const card = document.querySelector("#lib-list .card").getBoundingClientRect();
+      return { barBottom: Math.round(bar.bottom), cardTop: Math.round(card.top), viewport: window.innerHeight };
+    });
+    assert.ok(firstResult.cardTop >= firstResult.barBottom && firstResult.cardTop < firstResult.viewport,
+      `깊이 내린 채 검색하자 첫 결과가 ${firstResult.cardTop}px 에 있습니다 — 띠 아래(${firstResult.barBottom}px)에 보여야 합니다.`);
+    await rhythmPage.locator("#lib-search").fill("");
+    await rhythmPage.evaluate(() => window.scrollTo(0, 0));
+  }
+  assert.ok(sectionLabelGaps.length >= 4, `섹션 라벨 간격 표본이 ${sectionLabelGaps.length}개뿐입니다 — 판정할 수 없습니다.`);
+  assert.equal(new Set(sectionLabelGaps.map((entry) => entry.split(":")[1])).size, 1,
+    `섹션 라벨 위 간격이 선행 요소에 따라 갈립니다(§4-6): ${sectionLabelGaps.join(" · ")}`);
+  await rhythmContext.close();
+
   console.log(JSON.stringify({
     result: "pass",
     viewport: "390x844",
@@ -1093,6 +1191,7 @@ try {
     historyPayloadGate: { urlChanges, tabChanges },
     serviceWorkerUpdateGate: true,
     responsive,
+    verticalRhythm: { topbar: topbarHeight, sectionLabelGaps: [...new Set(sectionLabelGaps.map((entry) => entry.split(":")[1]))] },
     themePersistence: true,
     homeRetapScrollTop: true,
     domainGraphToLibrary: true,

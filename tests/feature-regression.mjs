@@ -556,6 +556,212 @@ try {
   assert.match(weekBoundary.status, /이번 주의 질문이 새로 열렸습니다/u,
     "주 경계 재추첨이 화면만 바꾸고 낭독하지 않았습니다.");
 
+  /* ── [흐름 2파도] 2026-11-15 지시 "방문자의 검색 및 이동탭 흐름과 역방향 되돌리기 — 사용자 편의적 관점에서 불편점 개선" ── */
+
+  /* homeSearchClear — [지우기]는 지울 것(친 글자·결과·빈 결과 안내)이 있을 때만 검색 줄 안에 보인다. 누르거나 입력 안에서
+     Esc 를 치면 입력·결과·결과 낭독을 비우고 포커스를 입력에 둔다. 홈 탭 재탭은 지우지 않는다(N-11) — 지우기는 명시 조작뿐이다. */
+  const clearProbe = await freshPage();
+  {
+    const p = clearProbe.page;
+    const clearButton = p.locator("[data-clear-question-search]");
+    const submitQuery = async (query) => {
+      await p.locator("#question-search").fill(query);
+      await p.locator("#question-search-form").evaluate((form) => form.requestSubmit());
+      await p.waitForTimeout(220);
+    };
+    const searchState = () => p.evaluate(() => ({
+      value: document.getElementById("question-search").value,
+      results: document.querySelectorAll("#view .question-results, #view .question-hit").length,
+      emptyNotice: document.querySelectorAll("#view .empty").length,
+      focus: document.activeElement?.id || document.activeElement?.tagName,
+      resultAnnounced: /권을 찾았습니다/u.test(`${document.getElementById("question-search-status").textContent}|${document.getElementById("app-status").textContent}`),
+    }));
+    const clearedState = { value: "", results: 0, emptyNotice: 0, focus: "question-search", resultAnnounced: false };
+    await p.waitForSelector("#question-search");
+    assert.equal(await clearButton.isVisible(), false, "첫 방문 빈 검색창에 [지우기]가 보입니다.");
+    await p.locator("#question-search").fill("데미안");
+    assert.equal(await clearButton.isVisible(), true, "검색창에 글자를 쳤는데 [지우기]가 보이지 않습니다.");
+    await submitQuery("데미안");
+    await p.waitForSelector("#view .question-hit");
+    const clearBox = await clearButton.boundingBox();
+    const inputBox = await p.locator("#question-search").boundingBox();
+    assert.ok(clearBox.width >= 44 && clearBox.height >= 44,
+      `[지우기] 터치 타깃이 ${Math.round(clearBox.width)}x${Math.round(clearBox.height)}px 입니다(§8-1 44x44).`);
+    assert.ok(clearBox.y >= inputBox.y - 1 && clearBox.y + clearBox.height <= inputBox.y + inputBox.height + 1
+      && clearBox.x >= inputBox.x && clearBox.x + clearBox.width <= inputBox.x + inputBox.width + 1,
+      "[지우기]가 검색 줄 안에 있지 않습니다.");
+    await p.locator('.tab[data-tab="question"]').click();
+    await p.waitForTimeout(220);
+    assert.ok(await p.locator("#view .question-hit").count() > 0, "홈 탭 재탭이 검색 결과를 지웠습니다(N-11).");
+    assert.equal(await p.locator("#question-search").inputValue(), "데미안", "홈 탭 재탭이 친 글자를 지웠습니다(N-11).");
+    await clearButton.click();
+    await p.waitForTimeout(160);
+    assert.deepEqual(await searchState(), clearedState,
+      "[지우기] 후 입력·결과·결과 낭독이 비지 않았거나 포커스가 입력창에 있지 않습니다.");
+    assert.equal(await clearButton.isVisible(), false, "지운 뒤에도 [지우기]가 남아 있습니다.");
+    await submitQuery("zzzzz");
+    assert.equal(await p.locator("#view .empty").count(), 1, "빈 결과 안내가 뜨지 않아 Esc 지우기를 판정할 수 없습니다.");
+    assert.equal(await clearButton.isVisible(), true, "빈 결과 안내가 보이는데 [지우기]가 보이지 않습니다.");
+    await p.locator("#question-search").focus();
+    await p.keyboard.press("Escape");
+    await p.waitForTimeout(160);
+    assert.deepEqual(await searchState(), clearedState, "입력 안 Esc 가 [지우기]와 같은 동작을 하지 않았습니다.");
+    assert.deepEqual(clearProbe.errors, []);
+    await clearProbe.context.close();
+  }
+
+  /* overlayDepthClose — 시트가 겹치면(책 → 뿌리 따라가기 → 뿌리의 책) [이전]은 한 칸, [닫기]·배경 탭은 쌓인 전부를 걷어
+     탭 화면으로 돌아간다. ESC 는 한 칸(브라우저 뒤로와 같다). "닫기"를 눌렀는데 앞 시트가 다시 뜨면 이름과 동작이 어긋난다. */
+  const depthProbe = await freshPage();
+  {
+    const p = depthProbe.page;
+    const at = () => p.evaluate(() => history.state?.i);
+    /* 대기는 판정이 아니다 — 기다리던 화면이 안 와도 여기서 죽지 않고, 뒤의 인덱스 단언이 무엇이 틀렸는지 말한다(§9 E-026). */
+    const settleClosed = async () => {
+      await p.waitForFunction(() => !document.querySelector("#overlay-root .sheet"), null, { timeout: 2500 }).catch(() => {});
+      await p.waitForTimeout(260);
+    };
+    const settleTrail = async () => {
+      await p.waitForSelector("#overlay-root .trail-step", { timeout: 2500 }).catch(() => {});
+      await p.waitForTimeout(260);   // 시트 등장 효과가 끝난 뒤 좌표를 잰다
+    };
+    const atLeast44 = async (selector) => {
+      const rect = await p.locator(selector).boundingBox();
+      return Boolean(rect) && rect.width >= 44 && rect.height >= 44;
+    };
+    const focusedBook = () => p.evaluate(() => document.activeElement?.dataset?.openBook);
+
+    // 홈 첫 화면(인덱스 0) — 검색 결과의 가지·줄기 책 → 뿌리 따라가기
+    await p.locator("#question-search").fill("어떻게 살아야 하는가");
+    await p.locator("#question-search-form").evaluate((form) => form.requestSubmit());
+    await p.waitForSelector("#view .question-hit");
+    const homeIndex = await at();
+    const opener = p.locator("#view .question-hit:has(.tier:not(.tier-root))").first();
+    const openerId = await opener.getAttribute("data-open-book");
+    await opener.click();
+    await p.waitForSelector("#overlay-root [data-open-trail]");
+    assert.equal(await p.locator("#overlay-root .sheet-prev").count(), 0, "깊이 1 시트에 [이전]이 있습니다.");
+    assert.equal(await p.locator("#overlay-root .sheet-close").getAttribute("aria-label"), "책 상세 닫기", "깊이 1 [닫기]의 접근 이름이 바뀌었습니다.");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    assert.equal(await at(), homeIndex + 2, "뿌리 따라가기가 깊이 2 로 쌓이지 않았습니다.");
+    assert.equal(await p.locator("#overlay-root .sheet-prev").isVisible(), true, "겹친 시트에 [이전]이 보이지 않습니다.");
+    assert.equal(await p.locator("#overlay-root .sheet-close").isVisible(), true, "겹친 시트에 [닫기]가 보이지 않습니다.");
+    assert.ok(await atLeast44("#overlay-root .sheet-prev") && await atLeast44("#overlay-root .sheet-close"),
+      "[이전]·[닫기] 터치 타깃이 44px 미만입니다(§8-1).");
+    assert.equal(await p.locator("#overlay-root .sheet-prev").getAttribute("aria-label"), "이전 화면으로", "[이전]의 접근 이름이 다릅니다.");
+    await p.locator("#overlay-root .sheet-prev").click();
+    await p.waitForSelector("#overlay-root .sheet [data-open-trail]", { timeout: 2500 }).catch(() => {});
+    await p.waitForTimeout(260);
+    assert.equal(await at(), homeIndex + 1, "[이전]이 한 칸 돌아가지 않았습니다.");
+    assert.equal(await p.locator("#overlay-root .sheet").count(), 1, "[이전] 뒤에 앞 시트가 보이지 않습니다.");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    await p.locator("#overlay-root .sheet-close").click();
+    await settleClosed();
+    assert.equal(await at(), homeIndex, "[닫기]가 쌓인 시트를 모두 닫고 탭 화면으로 돌아가지 않았습니다 — 앞 시트가 다시 떴습니다.");
+    assert.equal(await p.evaluate(() => history.state?.view?.overlay), null, "모두 닫았는데 히스토리 항목에 오버레이가 남았습니다.");
+    assert.equal(await p.locator("#exit-dialog").isVisible(), false, "[닫기]가 종료 팝업을 띄웠습니다(§6-3).");
+    assert.equal(await focusedBook(), openerId, "모두 닫은 뒤 포커스가 첫 시트를 연 요소로 돌아오지 않았습니다(§8-1).");
+    await back(p);
+    await p.waitForTimeout(220);
+    assert.equal(await p.locator("#exit-dialog").isVisible(), true, "모두 닫은 직후 첫 화면 뒤로가기가 종료 팝업을 띄우지 않았습니다(§6-2).");
+    await p.keyboard.press("Escape");
+    await p.waitForTimeout(220);
+
+    // 서재 탭 — 배경 탭 = 모두 닫기 · 깊이 3 · ESC = 한 칸 · 모두 닫은 뒤 뒤로 1회 = 앞 탭
+    await p.locator('.tab[data-tab="library"]').click();
+    await p.waitForSelector("#lib-list > .card");
+    await p.locator('[data-libtier="가지"]').click();
+    await p.waitForTimeout(160);
+    const libraryIndex = await at();
+    const cardId = await p.locator("#lib-list > .card").first().getAttribute("data-open-book");
+    await p.locator(`#lib-list [data-open-book="${cardId}"]`).click();
+    await p.waitForSelector("#overlay-root [data-open-trail]");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    await p.mouse.click(195, 20);   // 시트 밖 배경(시트 최대 높이 86dvh) = 한 칸(ESC·뒤로와 같다 · §9 E-051)
+    await p.waitForTimeout(400);
+    assert.equal(await at(), libraryIndex + 1, "배경 탭이 한 칸이 아니라 여러 칸을 닫았습니다(§9 E-051).");
+    assert.equal(await p.locator("#overlay-root .sheet").count(), 1, "배경 탭 한 칸 뒤에 첫 책 시트가 남아 있어야 합니다.");
+    await p.locator("#overlay-root .sheet-close").click();
+    await settleClosed();
+    assert.equal(await at(), libraryIndex, "[닫기]가 탭 화면까지 돌아가지 않았습니다.");
+    assert.equal(await focusedBook(), cardId, "모두 닫은 뒤 포커스가 첫 호출 요소로 돌아오지 않았습니다.");
+    await p.locator(`#lib-list [data-open-book="${cardId}"]`).click();
+    await p.waitForSelector("#overlay-root [data-open-trail]");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    await p.locator("#overlay-root .trail-step [data-open-book]").first().click();
+    await p.waitForFunction(() => !document.querySelector("#overlay-root .trail-step"), null, { timeout: 2500 }).catch(() => {});
+    await p.waitForTimeout(260);
+    assert.equal(await at(), libraryIndex + 3, "뿌리의 책이 깊이 3 으로 쌓이지 않았습니다.");
+    const prevOverlap = await p.evaluate(() => {
+      const prev = document.querySelector("#overlay-root .sheet-prev").getBoundingClientRect();
+      const first = document.querySelector("#overlay-root .sheet > .tier").getBoundingClientRect();
+      return Math.round(prev.bottom - first.top);
+    });
+    assert.ok(prevOverlap <= 0, `[이전]이 시트 첫 내용(계단 배지)과 ${prevOverlap}px 겹칩니다.`);
+    await p.keyboard.press("Escape");
+    await settleTrail();
+    assert.equal(await at(), libraryIndex + 2, "ESC 가 한 칸이 아니라 여러 칸을 닫았습니다.");
+    await p.locator("#overlay-root .sheet-close").click();
+    await settleClosed();
+    assert.equal(await at(), libraryIndex, "깊이 2 에서 [닫기]가 탭 화면까지 돌아가지 않았습니다.");
+    await back(p);
+    await p.waitForTimeout(220);
+    assert.equal(await p.locator('.tab[aria-current="page"]').getAttribute("data-tab"), "question",
+      "모두 닫은 직후 뒤로가기가 앞 탭으로 가지 않았습니다(§6-1).");
+    assert.equal(await p.locator("#exit-dialog").isVisible(), false, "다른 탭에서 뒤로가기가 종료 팝업을 띄웠습니다(§6-3).");
+
+    /* 서재 탭 — [이전]을 같은 자리에서 600ms 간격으로 두 번 누르면 두 칸 돌아간다. 한 칸 뒤 시트 높이가 바뀌어
+       그 자리가 배경이 돼도 쌓인 시트가 모두 닫히지 않는다(§9 E-051 · 2파도 적대 검증 W2-F1). */
+    await p.locator('.tab[data-tab="library"]').click();
+    await p.waitForSelector("#lib-list > .card");
+    const libraryIndexAgain = await at();
+    await p.locator(`#lib-list [data-open-book="${cardId}"]`).click();
+    await p.waitForSelector("#overlay-root [data-open-trail]");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    await p.locator("#overlay-root .trail-step [data-open-book]").first().click();
+    await p.waitForFunction(() => !document.querySelector("#overlay-root .trail-step"), null, { timeout: 2500 }).catch(() => {});
+    await p.waitForTimeout(260);
+    assert.equal(await at(), libraryIndexAgain + 3, "연타 시험의 전제(깊이 3)가 성립하지 않았습니다.");
+    const prevCenter = await p.evaluate(() => {
+      const rect = document.querySelector("#overlay-root .sheet-prev").getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await p.mouse.click(prevCenter.x, prevCenter.y);
+    await p.waitForTimeout(600);
+    await p.mouse.click(prevCenter.x, prevCenter.y);
+    await p.waitForTimeout(400);
+    assert.equal(await at(), libraryIndexAgain + 1, "[이전] 연타가 두 칸이 아니라 쌓인 시트를 모두 닫았습니다(§9 E-051).");
+    assert.equal(await p.locator("#overlay-root .sheet").count(), 1, "[이전] 두 번 뒤에 첫 책 시트가 남아 있어야 합니다.");
+    await p.keyboard.press("Escape");
+    await settleClosed();
+
+    // 계보 탭 — 겹친 시트에서 [계보 보기]로 나갔다가 뒤로 돌아와도 깊이를 안다(항목이 깊이를 싣는다)
+    await p.locator('.tab[data-tab="lineage"]').click();
+    await p.waitForSelector("#view .stream .card");
+    const lineageIndex = await at();
+    await p.locator("#view .stream .card:not(.is-root)").first().click();
+    await p.waitForSelector("#overlay-root [data-open-trail]");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    await p.locator("#overlay-root .trail-end + .sheet-actions [data-goto-lineage]").click();
+    await settleClosed();
+    await back(p);
+    await settleTrail();
+    assert.equal(await p.locator("#overlay-root .sheet-prev").count(), 1,
+      "앞 화면에서 뒤로 돌아온 겹친 시트가 깊이를 잃었습니다 — [닫기]가 한 칸만 걷습니다.");
+    await p.locator("#overlay-root .sheet-close").click();
+    await settleClosed();
+    assert.equal(await at(), lineageIndex, "뒤로 돌아온 겹친 시트의 [닫기]가 탭 화면까지 돌아가지 않았습니다.");
+    assert.deepEqual(depthProbe.errors, []);
+    await depthProbe.context.close();
+  }
+  /* ── [흐름 2파도 끝] ── */
+
   console.log(JSON.stringify({
     result: "pass",
     libraryPaging: [80, 160, 175],
@@ -570,6 +776,8 @@ try {
     journeyCompletionNotice: true,
     weeklyQuestionRotation: [weekOne.questionWeek, weekTwo.questionWeek],
     weekBoundaryRedraw: true,
+    homeSearchClear: true,
+    overlayDepthClose: true,
     modalAccessibility: true,
     rootArrivalSingleIncrement: true,
     readStateCycle: true,
