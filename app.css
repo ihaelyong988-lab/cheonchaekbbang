@@ -19,6 +19,7 @@
   --outline-edge: #6E6E62;    /* btn-outline 테두리 (테마 토큰) */
   --serif: "Noto Serif KR", "Batang", "BatangChe", serif;
   --sans: "Pretendard", "Malgun Gothic", system-ui, sans-serif;
+  --tabbar-h: 59px;           /* .tab 58 + 상단 경계 1 — 본문 하단 여백이 이 값 + 12 를 따른다 */
 }
 
 html[data-theme="navy"] {
@@ -69,14 +70,15 @@ body {
   background: var(--silver);
   color: var(--ink);
   border-bottom: 1px solid var(--silver-line);
-  padding: 12px 14px 11px 20px;
+  min-height: 56px;     /* 한 줄: 44px 컨트롤 + 위아래 약 6 + 하단 경계 1 */
+  padding: 4px 12px 4px 16px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;      /* 확대(188px)에서 44px 컨트롤 3개가 한 줄에 안 들어간다 — 넘치는 대신 접는다(원장 25) */
 }
-/* 브랜드·부제를 세로로 묶어 컨트롤 3개 자리를 만든다 — 한 줄 배치는 360px 에서 여유 0이었다 */
-.brand-group { flex: 1; min-width: 0; }
+/* 브랜드와 부제는 한 줄이다. 부제는 컨트롤 3개와 같은 줄에 다 들어가는 폭에서만 보인다(아래 미디어쿼리) */
+.brand-group { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
 .brand { font-size: 19px; font-weight: 700; letter-spacing: 0.02em; display: flex; }
 .brand-btn {
   font: inherit; color: inherit;
@@ -87,7 +89,10 @@ body {
   border-radius: 10px; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.brand-sub { font-size: 12.5px; color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 부제는 남는 폭만 차지한다(폭 0 + 늘림) — 부제 때문에 컨트롤이 다음 줄로 밀리지 않는다 */
+.brand-sub { display: none; width: 0; flex: 1 1 auto; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 경계 400 = 실측(375x812·은회): 부제가 잘리지 않는 최소 앱 폭이 기본 라벨 386 · 세 글자 이름(○○○님) 395 */
+@media (min-width: 400px) { .brand-sub { display: block; } }
 .profile-btn {
   font-family: var(--sans);
   font-size: 13px; font-weight: 600;
@@ -123,16 +128,19 @@ body {
 /* ── 본문 ─────────────────────────── */
 .view {
   flex: 1;
-  padding: 20px 16px calc(76px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(var(--tabbar-h) + 12px + env(safe-area-inset-bottom));   /* 마지막 항목이 고정 탭바에 가리지 않는다 */
   outline: none;
 }
 
+/* 세로 리듬(§4-6): 섹션 사이 16 > 카드 안 묶음 8 > 줄 간격(행간만).
+   카드(button 포함)를 블록으로 두어 앞 요소의 아래 여백(≤16)이 이 16 과 접히게 한다 —
+   inline-block 버튼은 접히지 않아 선행 요소에 따라 22/32 로 갈렸다. */
 .section-label {
   font-size: 12.5px;
   font-weight: 700;
   color: var(--muted);
   letter-spacing: 0.06em;
-  margin: 22px 2px 8px;
+  margin: 16px 2px 8px;
 }
 .section-label:first-child { margin-top: 0; }
 
@@ -143,7 +151,7 @@ body {
   border: 1px solid var(--silver-line);
   border-radius: 10px;
   padding: 14px 16px 0;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .q-text {
   font-family: var(--serif);
@@ -208,7 +216,7 @@ body {
   }
 }
 /* 상세 화면(여정 등) 전용 보조 텍스트 — 홈 히어로에는 사용 금지 */
-.q-kicker { font-size: 12px; color: var(--bronze); letter-spacing: 0.08em; margin-bottom: 10px; font-weight: 700; }
+.q-kicker { font-size: 12px; color: var(--bronze); letter-spacing: 0.08em; margin-bottom: 8px; font-weight: 700; }
 .q-card .q-kicker { color: var(--hero-accent); }
 .q-source { font-size: 13px; color: var(--muted); margin-top: 12px; }
 
@@ -238,20 +246,34 @@ body {
 
 /* 카드 공통 */
 .card {
+  display: block;            /* button 카드도 블록 — 형제 여백 접힘이 div 카드와 같아진다 */
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 16px;
-  margin-bottom: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+  line-height: 1.4;          /* 버튼 기본 행간(normal)은 글꼴마다 달라 카드 높이가 기기마다 흔들린다 */
 }
 .card-tap { width: 100%; text-align: left; cursor: pointer; font-family: var(--sans); }
 .card-title { font-size: 15.5px; font-weight: 700; color: var(--ink); }
-.card-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.card-meta { font-size: 13px; color: var(--muted); }
 .card-principle { font-size: 14px; color: var(--ink); margin-top: 8px; word-break: keep-all; }
+/* 책 카드: 계단 표지 · 제목 · 읽음 표지를 한 줄에 두고 메타·원칙은 그 아래 전폭으로 둔다 */
+.card-tap:has(> .tier) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.card-tap:has(> .tier) > * { grid-column: 1 / -1; }
+.card-tap:has(> .tier) > .tier { grid-column: 1; grid-row: 1; margin-bottom: 0; }
+.card-tap:has(> .tier) > .card-title { grid-column: 2; grid-row: 1; word-break: keep-all; overflow-wrap: anywhere; }
+.card-tap:has(> .tier) > .badge-read,
+.card-tap:has(> .tier) > .badge-reading { grid-column: 3; grid-row: 1; margin-left: 0; }
 
 /* 첫 방문 1회 안내 — 히어로 직후, 카드 토큰 재사용 (§2-1 C2-2) */
 .onboard { background: var(--silver); border-color: var(--silver-line); }
-.onboard-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.onboard-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
 
 /* 티어 뱃지 */
 .tier {
@@ -260,7 +282,7 @@ body {
   font-weight: 700;
   padding: 2px 7px;
   border-radius: 4px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   letter-spacing: 0.04em;
 }
 .tier-root { background: var(--charcoal); color: #FFFFFF; }
@@ -273,7 +295,8 @@ body {
 .badge-reading { background: #F3E9D2; color: #7A4E10; }
 
 /* ── 분야별 진행 (홈 대시보드) ───────────── */
-.gauge { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+/* 행 자체가 44px 터치 영역이라 행 안에 이미 위아래 13px 이 있다 — 상자 여백은 4 로 둔다 */
+.gauge { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px; }
 .gauge-row {
   width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px;
   padding: 6px 0; border: 0; background: transparent; color: var(--ink);
@@ -287,13 +310,13 @@ body {
 .gauge-row .bar i { display: block; height: 100%; background: var(--progress-fill); }
 
 .jprogress {
-  height: 10px; border-radius: 5px; overflow: hidden; margin-top: 10px;
+  height: 10px; border-radius: 5px; overflow: hidden; margin-top: 8px;
   background: var(--progress-track); border: 1px solid var(--progress-edge);
 }
 .jprogress i { display: block; height: 100%; background: var(--progress-fill); }
 
 /* 계보 스트림 */
-.chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0; }   /* 4 = 포커스 링(2+2)이 가로 스크롤 상자에 잘리지 않는 최소값 */
 .chip {
   flex: 0 0 auto; font-size: 13.5px; font-weight: 600;
   min-height: 44px; padding: 8px 14px; border-radius: 22px;
@@ -307,7 +330,7 @@ body {
 }
 .stream .card { position: relative; }
 .stream .card::before {
-  content: ""; position: absolute; left: -17px; top: 22px;
+  content: ""; position: absolute; left: -17px; top: 16px;   /* 첫 줄(계단 표지·제목) 중앙 */
   width: 9px; height: 9px; border-radius: 50%;
   background: var(--paper); border: 2px solid var(--amber);
 }
@@ -317,14 +340,23 @@ body {
 .search {
   width: 100%; min-height: 44px; font-family: var(--sans); font-size: 15px;
   padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px;
-  background: var(--card); color: var(--ink); margin-bottom: 10px;
+  background: var(--card); color: var(--ink); margin-bottom: 8px;
 }
 .search::placeholder { color: var(--muted); }
+/* 서재 검색창은 긴 목록을 내려도 화면에 남는다. 감싸는 마크업 없이 그림자 2겹으로 띠를 만든다:
+   바탕색 8px 띠(아래로 지나가는 카드를 가린다) + 그 아래 1px 경계선. 오버레이(30)·종료 팝업(50)·탭바(20)보다 낮다.
+   top 0 이라 위쪽 띠는 화면 밖이다 — 띠 밑에 완전히 가려진 카드가 생기지 않는다(그림자는 눌리지 않는다). */
+#lib-search {
+  position: sticky; top: 0; z-index: 1;
+  box-shadow: 0 0 0 8px var(--paper), 0 9px 0 0 var(--line);
+}
+/* 키보드로 옮긴 포커스가 고정 띠(44+8+1) 밑에 가리지 않는다 (WCAG 2.4.11) */
+html:has(#lib-search) { scroll-padding-top: 64px; }
 .library-summary { font-size: 13px; font-weight: 700; color: var(--muted); margin: 0 2px 8px; }
 .question-search { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; }
 .question-search .search { margin-bottom: 0; }
 .question-search .btn { min-width: 74px; }
-.question-results { margin-top: 10px; }
+.question-results { margin-top: 8px; }
 .load-more { width: 100%; margin-top: 4px; }
 .match-question {
   margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -332,22 +364,24 @@ body {
 }
 .notice {
   background: var(--silver); border: 1px solid var(--silver-line); border-radius: 8px;
-  font-size: 13px; color: var(--muted); padding: 10px 12px; margin-bottom: 12px;
+  font-size: 13px; color: var(--muted); padding: 8px 12px; margin-bottom: 12px;
 }
 .source-note { margin-top: 12px; }
-.empty { font-size: 14px; color: var(--muted); padding: 18px 4px; }
+.empty { font-size: 14px; color: var(--muted); padding: 12px 4px; }
 
 /* 기록 */
 .qa-item .q { font-family: var(--serif); font-size: 16px; font-weight: 600; word-break: keep-all; }
 .qa-item .src { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
 .qa-item textarea {
-  width: 100%; min-height: 72px; margin-top: 10px;
+  width: 100%; min-height: 72px; margin-top: 8px;
   font-family: var(--sans); font-size: 14px; line-height: 1.6; color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
   background: var(--paper); resize: vertical;
 }
 .qa-item textarea::placeholder { color: var(--muted); }
-/* 계보 진행률 — 분야마다 탭 1개, 누르면 그 분야 책 목록이 아래로 펼쳐진다 */
+/* 계보 진행률 — 분야마다 탭 1개, 누르면 그 분야 책 목록이 아래로 펼쳐진다.
+   분야 게이지와 같은 이유로 행 목록 상자의 위아래 여백은 4 다(행 안에 44px 터치 영역이 있다) */
+.card:has(> .progress-row) { padding: 4px 12px; }
 .progress-row {
   display: flex; width: 100%; align-items: center; gap: 10px;
   min-height: 44px; padding: 8px 2px; border-bottom: 1px solid var(--line);
@@ -363,7 +397,7 @@ body {
   transform: translateY(-2px) rotate(45deg);
 }
 .progress-row[aria-expanded="true"]::after { transform: translateY(2px) rotate(-135deg); }
-.progress-panel { padding: 2px 0 8px; border-bottom: 1px solid var(--line); }
+.progress-panel { padding: 4px 0 8px; border-bottom: 1px solid var(--line); }
 .progress-panel:last-child { border-bottom: none; }
 .progress-book {
   display: flex; width: 100%; align-items: center; gap: 8px;
@@ -374,10 +408,10 @@ body {
 .progress-book .tier { flex: 0 0 auto; margin-bottom: 0; }
 .progress-book .t { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--ink); word-break: keep-all; }
 .progress-book .a { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); }
-.progress-note { font-size: 12.5px; font-weight: 700; color: var(--muted); padding: 6px 2px 2px; }
+.progress-note { font-size: 12.5px; font-weight: 700; color: var(--muted); padding: 4px 2px; }
 
 /* 수집 취소 (원장 63) */
-.qa-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+.qa-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .qa-warn { font-size: 12.5px; color: var(--bronze); font-weight: 700; }
 
 /* 하단 탭 */
@@ -407,40 +441,43 @@ body {
 .sheet {
   width: 100%; max-width: 480px; max-height: 86dvh; overflow-y: auto;
   background: var(--paper); border-radius: 14px 14px 0 0;
-  padding: 18px 18px calc(24px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
   position: relative; overscroll-behavior: contain;
 }
 .has-overlay { overflow: hidden; }
-.sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--silver-line); margin: 0 auto 14px; }
+.sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--silver-line); margin: 0 auto 8px; }
 .sheet-close {
   position: absolute; top: 8px; right: 10px; min-width: 44px; min-height: 44px;
   border: 0; background: transparent; color: var(--muted); font-family: var(--sans);
   font-size: 13px; font-weight: 700; cursor: pointer;
 }
 .sheet h2 { font-size: 19px; font-weight: 700; word-break: keep-all; }
-.sheet .meta { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+/* 본문 시작을 당기면서 닫기 버튼(우상단 44px)이 첫 줄 제목과 겹치지 않게 한다 */
+.sheet-close + h2 { padding-right: 48px; }
+.sheet .meta { font-size: 13.5px; color: var(--muted); }
 .principle-box {
   font-family: var(--serif); font-size: 15.5px; word-break: keep-all;
   background: var(--card); border-left: 3px solid var(--amber);
-  border-radius: 0 8px 8px 0; padding: 12px 14px; margin: 14px 0;
+  border-radius: 0 8px 8px 0; padding: 12px 14px; margin: 12px 0;
 }
-.book-q { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.book-q { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .book-q:last-child { border-bottom: none; }
 .book-q p { font-size: 14.5px; word-break: keep-all; flex: 1; }
-.book-q .src { font-size: 12px; color: var(--muted); display: block; margin-top: 2px; }
-.sheet-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.book-q .src { font-size: 12px; color: var(--muted); display: block; }
+.sheet-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.sheet-actions .search { margin-bottom: 0; }   /* 묶음 간격은 gap 하나로 — 파일 입력만 8 이 더 벌어졌다 */
 
 /* 내 서재 (로컬 프로필) */
 .profile-input {
   width: 100%; min-height: 44px; font-family: var(--sans); font-size: 15px;
   padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px;
-  background: var(--card); color: var(--ink); margin-top: 10px;
+  background: var(--card); color: var(--ink); margin-top: 8px;
 }
 .profile-input::placeholder { color: var(--muted); }
-.profile-note { font-size: 13px; color: var(--muted); margin-top: 10px; word-break: keep-all; }
+.profile-note { font-size: 13px; color: var(--muted); margin-top: 8px; word-break: keep-all; }
 
 /* 설정 오버레이 — .sheet 를 그대로 쓰고 항목 행만 더한다 (§2-1 C4-1) */
-.settings-list { margin-top: 14px; }
+.settings-list { margin-top: 12px; }
 .settings-row {
   width: 100%; min-height: 44px; gap: 12px;
   display: flex; align-items: center; justify-content: space-between;
@@ -460,9 +497,9 @@ body {
 .trail-why::before { content: ""; position: absolute; left: 5px; top: 0; bottom: 6px; width: 1px; background: var(--silver-line); }
 .trail-end {
   background: var(--silver); color: var(--ink); border: 1px solid var(--silver-line);
-  border-radius: 10px; padding: 16px; margin-top: 4px;
+  border-radius: 10px; padding: 12px; margin-top: 4px;
 }
-.trail-end .label { font-size: 12px; color: var(--bronze); font-weight: 700; letter-spacing: 0.06em; margin-bottom: 6px; }
+.trail-end .label { font-size: 12px; color: var(--bronze); font-weight: 700; letter-spacing: 0.06em; margin-bottom: 4px; }
 .trail-end .name { font-family: var(--serif); font-size: 17px; font-weight: 600; word-break: keep-all; }
 
 /* 여정 */
@@ -489,7 +526,7 @@ body {
 .journey-check input[type="checkbox"]:disabled::after { background: var(--silver); border-color: var(--silver-line); }
 .journey-done {
   background: var(--silver); color: var(--ink); border: 1px solid var(--silver-line);
-  border-radius: 10px; padding: 20px 18px; margin-bottom: 10px;
+  border-radius: 10px; padding: 16px; margin-bottom: 8px;
 }
 .journey-done .q { font-family: var(--serif); font-size: 18px; word-break: keep-all; }
 .journey-done textarea {
@@ -526,7 +563,8 @@ body {
 .goodbye-box .btn { margin-top: 18px; }
 
 /* 서재를 좁힌 상태에서 되돌아갈 자리 — 지금 무엇이 걸렸는지 추적하지 않아도 되게 한다(원장 50·36) */
-#lib-reset:not(:empty) { margin-bottom: 10px; }
+#lib-reset:not(:empty) { margin-top: 8px; }
+#lib-list { margin-top: 8px; }   /* 칩 줄 안쪽 여백 4 + 8 = 12 — 필터 묶음과 목록을 가른다 */
 .lib-reset { width: 100%; }
 
 /* 백링크가 데려온 문답집 항목. 어느 것을 보러 왔는지만 남기는 정적 강조다(원장 37) */

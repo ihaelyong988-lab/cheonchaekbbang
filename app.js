@@ -931,7 +931,7 @@ document.getElementById("exit-leave").addEventListener("click", () => {
     <div class="goodbye" role="status" aria-live="polite">
       <div class="goodbye-box">
         <p class="t">천책빵 사용을 마쳤습니다.</p>
-        <p class="d">읽은 자리와 기록은 이 기기에 그대로 있습니다.</p>
+        <p class="d">읽은 자리와 기록은 그대로 있습니다.</p>
         <button class="btn btn-primary" id="reopen-app">다시 열기</button>
       </div>
     </div>`;
@@ -1003,7 +1003,7 @@ function questionSearchHtml() {
       </div>`
     : questionQuery
       // 빈 결과를 막다른 길로 두지 않는다 — 이 서재가 실제로 답할 수 있는 낱말을 눌러 갈 수 있게 준다(원장 18).
-      ? `<p class="empty">${esc(questionQuery)} 로는 연결된 책을 찾지 못했습니다. 아래 낱말로 다시 물어볼 수 있습니다.</p>
+      ? `<p class="empty">${esc(questionQuery)} 로는 연결된 책을 찾지 못했습니다.</p>
          <div class="chips" role="group" aria-label="다시 물어볼 낱말">
            ${TOPIC_CHIPS.map((term) => `<button class="chip" data-ask-term="${esc(term)}">${esc(term)}</button>`).join("")}
          </div>`
@@ -1019,10 +1019,10 @@ function questionSearchHtml() {
     ? `${questionResults.length}권을 찾았습니다.`
     : "질문을 입력하면 책을 찾습니다.");
   return `
-    <p class="section-label">질문 하기</p>
+    <p class="section-label">질문·제목·저자로 찾기</p>
     ${questionNotice ? `<p class="empty">${esc(questionNotice)}</p>` : ""}
     <form id="question-search-form" class="question-search">
-      <label class="sr-only" for="question-search">책으로 이어질 질문</label>
+      <label class="sr-only" for="question-search">질문, 제목 또는 저자</label>
       <input id="question-search" class="search" type="search" minlength="1"
         placeholder="예: 어떻게 살아야 하는가" value="${esc(questionQuery)}" required>
       <button class="btn btn-primary" type="submit">책 찾기</button>
@@ -1041,8 +1041,8 @@ function onboardingHtml() {
   if (state.onboardingDismissed || hasAnyRecord()) return "";
   return `
     <div class="card onboard">
-      <div class="card-title">이름을 저장하면 이 기기가 읽은 자리를 기억합니다</div>
-      <div class="card-meta">읽음 표시와 수집한 질문, 직접 쓴 답은 이 기기에만 남고 밖으로 나가지 않습니다.</div>
+      <div class="card-title">이름을 저장하면 읽은 자리를 기억합니다</div>
+      <div class="card-meta">기록은 이 기기에만 남습니다.</div>
       <div class="onboard-actions">
         <button class="btn btn-primary" data-open-profile="1">내 서재 열기</button>
         <button class="btn btn-ghost" data-dismiss-onboard="1">다음에</button>
@@ -1197,7 +1197,7 @@ function lineageBooks() {
   return ALL.filter((b) => b.domain === sessionDomain)
     .sort((a, z) => TIER_ORDER[a.tier] - TIER_ORDER[z.tier]);
 }
-function lineageLabel() { return `${sessionDomain}의 계보 — 뿌리에서 가지로`; }
+function lineageLabel() { return `${sessionDomain}의 계보`; }
 
 function renderLineage() {
   viewEl.innerHTML = `
@@ -1325,7 +1325,7 @@ function progressBookRow(b) {
    나온다(R6 1정보 1표시). 전권 읽음 + 문학 펼침 조건에서 64권 전량이 중복됐다(§9 E-016). */
 function progressPanelHtml(domain) {
   const remaining = domainBooks(domain).filter((b) => readStatus(b.id) === "none");
-  if (!remaining.length) return `<p class="progress-note">남은 책이 없습니다. 아래 읽은 책에서 이어 봅니다.</p>`;
+  if (!remaining.length) return `<p class="progress-note">남은 책이 없습니다.</p>`;
   return `<p class="progress-note">아직 읽지 않은 책</p>${remaining.map((b) => progressBookRow(b)).join("")}`;
 }
 
@@ -1376,9 +1376,9 @@ function renderRecord() {
     return `
       <div class="card qa-item">
         <p class="q" id="qa-q-${index}">${esc(qObj.text)}</p>
-        <span class="src">${esc(b.author)}, ${esc(qObj.source)} · ${esc(x.date)} 수집</span>
+        <span class="src">${esc(b.author)}, ${esc(specificSource(b, qObj) || `『${b.title}』`)} · ${esc(x.date)} 수집</span>
         <textarea data-answer-q="${x.id}" aria-labelledby="qa-q-${index}" maxlength="${ANSWER_MAX}"
-          placeholder="나의 답을 적어 둡니다 (기기에만 보관)">${esc(x.myAnswer || "")}</textarea>
+          placeholder="나의 답을 적어 둡니다">${esc(x.myAnswer || "")}</textarea>
         <div class="qa-actions">${dropArmedId === x.id
           ? `<span class="qa-warn">쓴 답도 함께 지워집니다.</span>
              <button class="btn btn-ghost" data-drop-confirm="${x.id}">지우기</button>
@@ -1406,15 +1406,21 @@ function renderRecord() {
 
   viewEl.innerHTML = `
     ${orphanNotice}
-    <p class="section-label">계보 진행률 (읽음 기준)</p>
+    <p class="section-label">계보 진행률</p>
     <div class="card">${domainRows}</div>
-    <p class="section-label">나만의 문답집 — 개인 기록 전용</p>
-    ${qa || jqa ? jqa + qa : `<p class="empty">수집한 질문이 아직 없습니다. 이번 주의 질문에서 시작해 보세요.</p>`}
+    <p class="section-label">나만의 문답집</p>
+    ${qa || jqa ? jqa + qa : `<p class="empty">수집한 질문이 아직 없습니다.</p>`}
     ${reading.length ? `<p class="section-label">읽는 중 (${reading.length}권)</p>` + reading.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}
     ${read.length ? `<p class="section-label">읽은 책 (${read.length}권)</p>` + read.map((b) => bookCard(b, { noPrinciple: true })).join("") : ""}`;
 }
 
 /* ── 오버레이: 책 상세 시트 (F6) ────────────────────── */
+/* 출처가 제목뿐이거나 "핵심 주제·원리" 일반형이면 이 책 제목의 되풀이다(R6) — 편·장 같은 구체 출처만 돌려준다. 데이터는 그대로다. */
+function specificSource(book, q) {
+  const generic = /^『([^』]+)』\s*(?:의\s*)?(?:핵심 주제와 원리 기반 자체 질문|핵심 원리 기반 자체 질문|핵심 주제)?$/u.exec(String(q.source || "").trim());
+  return generic && book.title.includes(generic[1]) ? "" : q.source;
+}
+
 function renderSheet(bookId) {
   const b = BY_ID.get(bookId);
   if (!b) { overlayRoot.innerHTML = ""; return; }
@@ -1423,9 +1429,10 @@ function renderSheet(bookId) {
   const qs = b.questions.map((q, i) => {
     const qid = questionId(b, i);
     const collected = state.questions.some((x) => x.id === qid);
+    const source = specificSource(b, q);
     return `
       <div class="book-q">
-        <p>${esc(q.text)}<span class="src">${esc(q.source)}</span></p>
+        <p>${esc(q.text)}${source ? `<span class="src">${esc(source)}</span>` : ""}</p>
         <button class="btn btn-ghost" data-collect="${qid}" ${collected ? "disabled" : ""}>${collected ? "수집됨" : "수집"}</button>
       </div>`;
   }).join("");
@@ -1435,20 +1442,20 @@ function renderSheet(bookId) {
       <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(b.title)} 상세" tabindex="-1">
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="책 상세 닫기">닫기</button>
-        ${tierBadge(b)}${statusBadge(b.id)}
+        ${tierBadge(b)}
         <h2>${esc(b.title)}</h2>
         <p class="meta">${esc(b.author)} · ${esc(b.era)} · ${esc(b.domain)}</p>
         ${b.celeb2025?.verificationStatus === "source-text-retained"
-          ? `<div class="notice source-note">엑셀 원문 표기를 보존한 항목입니다. 정확한 서지는 확인되지 않았습니다.</div>`
+          ? `<div class="notice source-note">정확한 서지는 확인되지 않았습니다.</div>`
           : ""}
         <div class="principle-box">${esc(b.principle)}</div>
         <p class="section-label">이 책이 던지는 질문</p>
         ${qs}
         <div class="sheet-actions">
           ${b.tier === "root"
-            ? `<button class="btn btn-primary" data-goto-lineage="${esc(b.domain)}">이 책이 뿌리 고전입니다 — 계보 보기</button>`
+            ? `<button class="btn btn-primary" data-goto-lineage="${esc(b.domain)}">계보 보기</button>`
             : `<button class="btn btn-primary" data-open-trail="${b.id}">뿌리 따라가기</button>`}
-          <button class="btn btn-ghost" data-cycle-read="${b.id}">읽음 상태: ${stLabel} (탭하여 변경)</button>
+          <button class="btn btn-ghost" data-cycle-read="${b.id}">읽음 상태: ${stLabel}</button>
         </div>
       </div>
     </div>`;
@@ -1478,7 +1485,7 @@ function renderTrail(bookId) {
       <div class="sheet" role="dialog" aria-modal="true" aria-label="뿌리 따라가기" tabindex="-1">
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="뿌리 따라가기 닫기">닫기</button>
-        <p class="section-label">뿌리 따라가기 — 가지에서 뿌리로</p>
+        <p class="section-label">뿌리 따라가기</p>
         ${steps}
         <div class="trail-end">
           <p class="label">이 책의 뿌리</p>
@@ -1510,7 +1517,7 @@ function renderJourneyList() {
       <div class="sheet" role="dialog" aria-modal="true" aria-label="여정 선택" tabindex="-1">
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="여정 선택 닫기">닫기</button>
-        <p class="section-label">질문 여정 — 하나의 질문, 뿌리에서 가지까지</p>
+        <p class="section-label">질문 여정</p>
         ${JOURNEYS.every((item) => state.journeysDone.some((x) => x.id === item.id))
           // 완주 수치는 홈 스트립이 원천이므로 문구에 넣지 않는다(R6 · 원장 65).
           ? `<div class="notice">모든 갈래의 질문을 지나 왔습니다. 남긴 답은 기록 탭 문답집에 그대로 있습니다.</div>`
@@ -1575,10 +1582,10 @@ function journeyDoneHtml(j, allDone) {
   return `
     <div class="journey-done">
       <p class="q-kicker">여정 완료</p>
-      <p class="q">${esc(j.question.text)} — 이 질문에 대한 나의 답은 무엇인가.</p>
+      <p class="q">${esc(j.question.text)}</p>
       <label class="sr-only" for="j-answer">이 질문에 대한 나의 답</label>
       <textarea id="j-answer" data-answer-draft="1" maxlength="${ANSWER_MAX}"
-        placeholder="나의 답 (기기에만 보관)">${esc(state.journeyDraft)}</textarea>
+        placeholder="나의 답">${esc(state.journeyDraft)}</textarea>
       <div class="sheet-actions">
         <button class="btn btn-light" data-finish-journey="${j.id}">여정 완료로 저장</button>
       </div>
@@ -1616,12 +1623,11 @@ function renderProfile() {
         <div class="sheet-handle"></div>
         <button class="sheet-close" data-close-overlay="1" aria-label="내 서재 닫기">닫기</button>
         <h2 id="profile-title">${p ? esc(p.name) + "님의 서재" : "내 서재"}</h2>
-        <p class="meta">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
+        <p class="meta" id="profile-note">${p ? "저장된 이름을 바꾸거나 지울 수 있습니다." : "이름 또는 별명을 저장합니다."}</p>
         <form id="profile-form">
           <input class="profile-input" id="profile-name" type="text" maxlength="20"
             placeholder="이름 또는 별명" value="${p ? esc(p.name) : ""}" aria-label="이름"
             aria-describedby="profile-note" enterkeyhint="done">
-          <p id="profile-note" class="profile-note">기록과 이름은 이 기기에만 보관됩니다.</p>
           <div class="sheet-actions">
             <button class="btn btn-primary" type="submit" data-save-profile="1">${p ? "이름 변경" : "저장"}</button>
             ${p ? `<button class="btn btn-ghost" type="button" data-clear-profile="1">이름 지우기</button>` : ""}
@@ -1677,7 +1683,6 @@ function renderSettings() {
                <button class="btn btn-ghost" data-reset-cancel="1">취소</button>`
             : `<button class="btn btn-ghost" data-reset-records="1">기록 모두 지우기</button>`}
         </div>
-        <p class="profile-note">내보낸 파일은 이 기기 안에서만 만들어집니다.</p>
       </div>
     </div>`;
   overlayRoot.querySelector(".sheet").focus();
@@ -1734,7 +1739,7 @@ function resetRecords() {
   syncedSnapshot = cloneState(fresh);
   heroQuestion = drawQuestion();
   resetArmed = false;
-  announce(save() ? "이 기기에 남아 있던 기록을 모두 지웠습니다." : SAVE_FAIL_NOTICE);
+  announce(save() ? "기록을 모두 지웠습니다." : SAVE_FAIL_NOTICE);
   dismissOverlay();
 }
 

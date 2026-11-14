@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative) => readFile(path.join(ROOT, relative), "utf8");
@@ -262,9 +262,82 @@ const orphanLinks = linkRegistry.links.filter((link) => !foundLinks.has(link.url
 assert.deepEqual(orphanLinks.map((link) => link.url), [],
   "코드에서 사라진 URL 이 등록부에 남아 있습니다 — 등록을 지우세요.");
 
+/* 문장 절제 (주인님 지시 2026-11-15 "방문자의 관점에서 필요 이상의 내용과 문장은 삭제") — 화면이 이미 보여 주는 사실,
+   한 화면에 두 번 나오는 정보(R6), 라벨·버튼 안 대시·괄호 부연을 되살리지 않는다. 판정은 주석을 걷은 코드로 한다. */
+{
+  const appCode = app.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/<!--[\s\S]*?-->/gu, "").replace(/(^|[ \t])\/\/[^\n]*/gmu, "$1");
+  assert.ok(appCode.includes("function renderSheet(") && appCode.includes("읽음 상태: ${stLabel}"), "주석 제거가 코드까지 지웠습니다.");
+  const fnBody = (name) => {
+    const start = appCode.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `추출 실패: function ${name}`);
+    let depth = 0, i = appCode.indexOf("{", start);
+    for (; i < appCode.length; i += 1) {
+      if (appCode[i] === "{") depth += 1;
+      else if (appCode[i] === "}" && --depth === 0) break;
+    }
+    return appCode.slice(start, i + 1);
+  };
+  for (const removed of ["(탭하여 변경)", "개인 기록 전용", "(읽음 기준)", "— 뿌리에서 가지로", "뿌리 고전입니다", "하나의 질문, 뿌리에서 가지까지",
+    "— 가지에서 뿌리로", "— 이 질문에 대한 나의 답은", "내보낸 파일은 이 기기 안에서만", "기록과 이름은 이 기기에만", "밖으로 나가지 않습니다",
+    "이 기기가 읽은 자리", "(기기에만 보관)", "이 기기에 남아 있던", "엑셀 원문 표기를 보존", "아래 낱말로 다시 물어볼",
+    "이번 주의 질문에서 시작해 보세요", "아래 읽은 책에서 이어 봅니다", "책으로 이어질 질문", ">질문 하기<"]) {
+    assert.ok(!appCode.includes(removed), `지운 문구가 되살아났습니다: ${removed}`);
+  }
+  // 버튼·섹션 라벨은 이름만 둔다. 수집 건수 하한은 정규식이 템플릿을 실제로 읽는지 보는 장치다(빈 통과 방지).
+  const buttonLabels = [...appCode.matchAll(/<button\b[^>]*>([^<]*)<\/button>/gu)].map((m) => m[1].trim()).filter(Boolean);
+  assert.ok(buttonLabels.length >= 20, `버튼 라벨이 ${buttonLabels.length}건만 잡혔습니다 — 정규식이 템플릿을 못 읽습니다.`);
+  assert.deepEqual(buttonLabels.filter((label) => / — |\(탭/u.test(label)), [], "버튼 라벨에 대시·괄호 부연이 있습니다.");
+  const sectionLabels = [...appCode.matchAll(/<p class="section-label">([^<]*)<\/p>/gu)].map((m) => m[1]);
+  assert.ok(sectionLabels.length >= 15, `섹션 라벨이 ${sectionLabels.length}건만 잡혔습니다.`);
+  assert.deepEqual(sectionLabels.filter((label) => / — /u.test(label)), [], "섹션 라벨에 대시 부연이 있습니다.");
+  assert.doesNotMatch(fnBody("lineageLabel"), / — /u, "계보 라벨에 대시 부연이 있습니다.");
+  /* "이 기기" 보관 범위 고지 허용 위치 — 4곳뿐이다. 새 고지를 더하지 말고 아래 두 곳을 고친다.
+     ① onboardingHtml 첫 방문 안내(C2-2 · G-12) ② renderSettings 설정 시트 1문장
+     ③ SAVE_FAIL_BANNER ④ LOAD_FAIL_BANNER — 저장을 거부·실패한 주체가 이 기기라는 오류 원인이다. */
+  const deviceCount = (source) => (source.match(/이 기기/gu) || []).length;
+  assert.equal(deviceCount(appCode), 4, `"이 기기" 문구가 허용 위치 4곳과 다릅니다(${deviceCount(appCode)}건).`);
+  assert.equal(deviceCount(fnBody("onboardingHtml")), 1, "첫 방문 안내에 보관 범위(이 기기)가 1회 있어야 합니다(C2-2).");
+  assert.equal(deviceCount(fnBody("renderSettings")), 1, "설정 시트의 보관 범위 고지는 1문장이어야 합니다.");
+  assert.match(appCode, /const SAVE_FAIL_BANNER = "이 기기가/u, "저장 거부 배너 원인 문구 누락");
+  assert.match(appCode, /const LOAD_FAIL_BANNER = "이 기기에/u, "읽기 실패 배너 원인 문구 누락");
+  assert.equal((appCode.match(/기기에만/gu) || []).length, 1, "\"기기에만\" 고지는 첫 방문 안내 1곳뿐이어야 합니다.");
+  // 첫 방문 안내는 제목 1줄 + 설명 1줄 — 등록 수단(이름 저장)과 보관 범위(이 기기)를 함께 담는다(C2-2).
+  const onboard = fnBody("onboardingHtml").match(/<div class="card-title">([^<]+)<\/div>\s*<div class="card-meta">([^<]+)<\/div>/u);
+  assert.ok(onboard, "첫 방문 안내의 제목·설명 구조 누락");
+  assert.ok(onboard[1].includes("이름") && onboard[1].length <= 24, `첫 방문 안내 제목은 이름 저장을 24자 이내로 말해야 합니다: ${onboard[1]}`);
+  assert.ok(onboard[2].includes("이 기기에만") && onboard[2].length <= 24, `첫 방문 안내 설명은 보관 범위를 24자 이내로 말해야 합니다: ${onboard[2]}`);
+  assert.match(fnBody("onboardingHtml"), /data-open-profile="1"/u, "첫 방문 안내에 이름 저장 진입 버튼이 없습니다.");
+  // 홈 검색은 질문뿐 아니라 제목·저자도 찾는다 — 라벨이 실제 범위를 말해야 한다.
+  assert.match(fnBody("questionSearchHtml"), /<p class="section-label">[^<]*제목[^<]*저자[^<]*<\/p>/u, "홈 검색 라벨이 제목·저자 검색을 말하지 않습니다.");
+  assert.match(fnBody("questionSearchHtml"), /<label class="sr-only" for="question-search">[^<]*제목[^<]*저자[^<]*<\/label>/u,
+    "홈 검색 입력의 접근 이름이 제목·저자 검색을 말하지 않습니다.");
+  // 책 시트: 읽음 상태는 순환 버튼 한 곳이 원천이다 — 머리 배지와 같이 두면 한 화면에 두 번이다(R6).
+  assert.doesNotMatch(fnBody("renderSheet"), /statusBadge\(/u, "책 시트에 읽음 배지와 읽음 상태 버튼이 함께 있습니다(R6).");
+  /* 질문 출처 — "『제목』의 핵심 주제" 같은 일반형은 책 시트에서 제목의 되풀이다. 구체 출처(편·장)만 보이고, 책이 달리 식별되지
+     않는 문답집에서는 일반형 대신 제목만 남긴다. 판정은 낱말 잔여물로 독립 계산해 두 방향(숨김·노출)을 모두 대조한다. */
+  assert.doesNotMatch(fnBody("renderSheet"), /esc\(q\.source\)/u, "책 시트가 출처를 거르지 않고 그립니다.");
+  assert.doesNotMatch(fnBody("renderRecord"), /esc\(qObj\.source\)/u, "문답집이 일반형 출처를 그대로 그립니다.");
+  const specificSource = new Function(`${fnBody("specificSource")}\nreturn specificSource;`)();
+  const { BOOKS } = await import(pathToFileURL(path.join(ROOT, "data/books.js")).href);
+  const residue = (book, source) => source.replace(/『([^』]+)』/gu, (all, title) => (book.title.includes(title) ? "" : all))
+    .replace(/의|핵심|주제와|주제|원리|기반|자체|질문|\s/gu, "");
+  let shownSources = 0;
+  const misjudged = [];
+  for (const book of BOOKS) for (const question of book.questions) {
+    const shown = Boolean(specificSource(book, question));
+    if (shown) shownSources += 1;
+    if (shown !== Boolean(residue(book, question.source))) misjudged.push(`${book.id}: ${question.source}`);
+  }
+  assert.deepEqual(misjudged, [], "출처 판정이 어긋났습니다 — 구체 출처를 숨기거나 일반형을 보입니다.");
+  // 손실 계수 — 2026-11-15 구체 출처 54건(전체 665건 중). 이보다 줄면 거르기가 구체 출처를 먹은 것이다.
+  assert.ok(shownSources >= 54, `보이는 구체 출처가 ${shownSources}건으로 줄었습니다(하한 54).`);
+  const lunyu = BOOKS.find((book) => book.id === "lunyu");
+  assert.equal(specificSource(lunyu, { source: "『국가』" }), "『국가』", "다른 책을 가리키는 출처를 숨겼습니다.");
+}
+
 const pkg = JSON.parse(await read("package.json"));
 assert.doesNotMatch(pkg.scripts.test, /npm run|pnpm run|yarn/u,
   "테스트 체인이 특정 패키지 매니저 호출에 묶여 있습니다 — 락파일은 pnpm, 내부 호출은 npm 이었습니다(원장 62).");
 assert.ok(pkg.scripts["test:production"], "배포 검사 스크립트가 사라졌습니다.");
 
-console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true, installQuality: true, answerLimitSingleSource: true, skipLinks: true, weeklyQuestions: true }, null, 2));
+console.log(JSON.stringify({ result: "pass", siteName: "천책빵", cachedAssets: cachedAssets.length, tabs: 4, templateOrder: true, brandHomeButton: true, contextStripMarkers: true, lineageProgressTabs: true, tabFirstPageReset: true, searchReachability: true, managerAgnosticTests: true, installQuality: true, answerLimitSingleSource: true, skipLinks: true, weeklyQuestions: true, copyRestraint: true }, null, 2));
