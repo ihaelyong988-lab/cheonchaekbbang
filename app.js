@@ -691,10 +691,9 @@ function rememberTabIndex(view, index) {
    어느 쪽도 성립하지 않으면 1 — 한 칸만 걷으면 센티널을 넘어설 일이 없다(§6-4). */
 function overlayDepthOf(raw, entry) {
   if (!entry.view.overlay) return 0;
-  const valid = (depth) => Number.isInteger(depth) && depth >= 1 && depth <= entry.i;
-  if (valid(raw?.depth)) return raw.depth;
-  const base = tabHistoryIndex.get(entry.view.tab);
-  return typeof base === "number" && valid(entry.i - base) ? entry.i - base : 1;
+  /* 깊이는 항목 payload 만 믿는다. 탭 인덱스 거리로 추정하면 낡은 기준에서 [닫기]가 사이의 탭 항목까지
+     건너뛰었다(§9 E-052). payload 가 없는 옛 항목은 1 — 한 칸만 걷으면 과다 뒤로가 생길 수 없다. */
+  return Number.isInteger(raw?.depth) && raw.depth >= 1 && raw.depth <= entry.i ? raw.depth : 1;
 }
 
 /* ── 오버레이 닫힘 단일 경로 (§6-4 N-5·N-6·N-7) ────── */
@@ -2174,8 +2173,9 @@ document.addEventListener("click", (e) => {
     sessionDomain = t.dataset.gotoLineage;
     pushView({ tab: "lineage", overlay: null });
   } else if (t.dataset.closeOverlay) {
-    // 배경 탭·닫기 버튼 = 같은 단일 경로. 보이는 시트는 1장이므로 쌓인 전부를 걷어 탭 화면으로 돌아간다.
-    if (e.target === t) dismissOverlay(overlayDepth);
+    /* [닫기] = 쌓인 전부, 배경 탭 = 한 칸(ESC·브라우저 뒤로와 같다). 한 칸 돌아가면 시트 높이가 바뀌어
+       [이전]이 있던 자리가 배경이 된다 — 배경이 모두 닫기였을 때 [이전] 연타가 시트를 전부 닫았다(§9 E-051). */
+    if (e.target === t) dismissOverlay(t.classList.contains("sheet-backdrop") ? 1 : overlayDepth);
   } else if (t.dataset.prevOverlay) {
     dismissOverlay(1);
   } else if (t.dataset.clearQuestionSearch) {

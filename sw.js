@@ -1,5 +1,5 @@
 // 천책빵 Service Worker — 전 자산 캐시, 완전 오프라인 동작 (PRD §6)
-const CACHE = "ccb-v1.19.0";
+const CACHE = "ccb-v1.20.0";
 // 카탈로그는 생성물(부팅 색인 + 분야 샤드 12개)만 캐시한다. 원천 모듈(data/books.js 등)은 Node 전용이라
 // 함께 캐시하면 같은 책을 두 번 받는다(§7-2 V3b). 샤드 목록 완전성은 tests/static-rules.mjs 가 디스크와 대조한다.
 const ASSETS = [

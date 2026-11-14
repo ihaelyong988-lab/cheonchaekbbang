@@ -354,8 +354,12 @@ assert.deepEqual(orphanLinks.map((link) => link.url), [],
   assert.ok(goBackCount(dismissBody) >= 1, "겹친 시트를 모두 닫는 여러 칸 경로가 dismissOverlay 에 없습니다.");
   assert.equal(goBackCount(appCode), goBackCount(dismissBody) + goBackCount(fnBody("goHome")),
     "여러 칸 뒤로가기가 dismissOverlay·goHome 밖에 있습니다(N-5 · INV-6).");
-  assert.match(appCode, /t\.dataset\.closeOverlay\) \{\s*if \(e\.target === t\) dismissOverlay\(overlayDepth\)/u,
-    "[닫기]·배경 탭이 쌓인 시트를 모두 닫지 않습니다.");
+  assert.match(appCode, /t\.dataset\.closeOverlay\) \{\s*if \(e\.target === t\) dismissOverlay\(t\.classList\.contains\("sheet-backdrop"\) \? 1 : overlayDepth\)/u,
+    "[닫기]는 쌓인 전부, 배경 탭은 한 칸이어야 합니다(N-13 · §9 E-051).");
+  assert.doesNotMatch(fnBody("overlayDepthOf"), /tabHistoryIndex/u, "깊이를 탭 인덱스 거리로 추정합니다 — 낡은 기준에서 과다 뒤로가 생깁니다(§9 E-052).");
+  assert.match(css, /@media \(max-width: 279px\) \{\s*\.question-search \{ grid-template-columns: 1fr; \}/u,
+    "200% 확대 폭에서 홈 검색 [지우기]가 입력 글자 칸을 덮습니다(§9 E-053).");
+  assert.match(css, /\.sheet-handle \+ \.sheet-close \+ \.journey-head \{ margin-top: 40px; \}/u, "여정 머리 카드 40px 은 깊이 1 시트에만 적용해야 합니다.");
   assert.match(appCode, /t\.dataset\.prevOverlay\) \{\s*dismissOverlay\(1\)/u, "[이전]이 한 칸만 돌아가지 않습니다.");
   assert.equal((appCode.match(/\$\{sheetHead\("[^"]+"\)\}/gu) || []).length, 6, "시트 머리를 sheetHead 밖에서 그리는 오버레이가 있습니다.");
   assert.equal((appCode.match(/class="sheet-close"/gu) || []).length, 2, "[닫기] 마크업은 sheetHead 의 두 갈래에만 있어야 합니다.");
@@ -371,6 +375,7 @@ assert.deepEqual(orphanLinks.map((link) => link.url), [],
     "문서 전체 scroll-padding 이 고정 검색창 자신에게 걸려 탭할 때 화면이 튑니다 — 목록 카드의 scroll-margin 으로 둡니다.");
   assert.match(css, /#lib-list \.card \{ scroll-margin-top: 64px; \}/u, "서재 카드 포커스 가림 방지(scroll-margin-top 64) 누락(§8-1).");
   assert.match(css, /\.sheet-close \+ \.journey-head \{ margin-top: 40px; \}/u, "여정 진행 머리 카드가 닫기 버튼 영역으로 올라옵니다(W1-03).");
+  assert.doesNotMatch(css, /\n\.sheet-close \+ \.journey-head/u, "여정 머리 카드 40px 이 겹친 시트에도 걸립니다 — [이전] 줄 아래 40px 이 더해집니다.");
 }
 
 const pkg = JSON.parse(await read("package.json"));

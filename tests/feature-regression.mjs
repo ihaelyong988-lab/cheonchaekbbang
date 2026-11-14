@@ -680,10 +680,14 @@ try {
     await p.waitForSelector("#overlay-root [data-open-trail]");
     await p.locator("#overlay-root [data-open-trail]").click();
     await settleTrail();
-    await p.mouse.click(195, 20);   // 시트 밖 배경(시트 최대 높이 86dvh)
+    await p.mouse.click(195, 20);   // 시트 밖 배경(시트 최대 높이 86dvh) = 한 칸(ESC·뒤로와 같다 · §9 E-051)
+    await p.waitForTimeout(400);
+    assert.equal(await at(), libraryIndex + 1, "배경 탭이 한 칸이 아니라 여러 칸을 닫았습니다(§9 E-051).");
+    assert.equal(await p.locator("#overlay-root .sheet").count(), 1, "배경 탭 한 칸 뒤에 첫 책 시트가 남아 있어야 합니다.");
+    await p.locator("#overlay-root .sheet-close").click();
     await settleClosed();
-    assert.equal(await at(), libraryIndex, "배경 탭이 쌓인 시트를 모두 닫지 않았습니다.");
-    assert.equal(await focusedBook(), cardId, "배경 탭으로 모두 닫은 뒤 포커스가 첫 호출 요소로 돌아오지 않았습니다.");
+    assert.equal(await at(), libraryIndex, "[닫기]가 탭 화면까지 돌아가지 않았습니다.");
+    assert.equal(await focusedBook(), cardId, "모두 닫은 뒤 포커스가 첫 호출 요소로 돌아오지 않았습니다.");
     await p.locator(`#lib-list [data-open-book="${cardId}"]`).click();
     await p.waitForSelector("#overlay-root [data-open-trail]");
     await p.locator("#overlay-root [data-open-trail]").click();
@@ -709,6 +713,32 @@ try {
     assert.equal(await p.locator('.tab[aria-current="page"]').getAttribute("data-tab"), "question",
       "모두 닫은 직후 뒤로가기가 앞 탭으로 가지 않았습니다(§6-1).");
     assert.equal(await p.locator("#exit-dialog").isVisible(), false, "다른 탭에서 뒤로가기가 종료 팝업을 띄웠습니다(§6-3).");
+
+    /* 서재 탭 — [이전]을 같은 자리에서 600ms 간격으로 두 번 누르면 두 칸 돌아간다. 한 칸 뒤 시트 높이가 바뀌어
+       그 자리가 배경이 돼도 쌓인 시트가 모두 닫히지 않는다(§9 E-051 · 2파도 적대 검증 W2-F1). */
+    await p.locator('.tab[data-tab="library"]').click();
+    await p.waitForSelector("#lib-list > .card");
+    const libraryIndexAgain = await at();
+    await p.locator(`#lib-list [data-open-book="${cardId}"]`).click();
+    await p.waitForSelector("#overlay-root [data-open-trail]");
+    await p.locator("#overlay-root [data-open-trail]").click();
+    await settleTrail();
+    await p.locator("#overlay-root .trail-step [data-open-book]").first().click();
+    await p.waitForFunction(() => !document.querySelector("#overlay-root .trail-step"), null, { timeout: 2500 }).catch(() => {});
+    await p.waitForTimeout(260);
+    assert.equal(await at(), libraryIndexAgain + 3, "연타 시험의 전제(깊이 3)가 성립하지 않았습니다.");
+    const prevCenter = await p.evaluate(() => {
+      const rect = document.querySelector("#overlay-root .sheet-prev").getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await p.mouse.click(prevCenter.x, prevCenter.y);
+    await p.waitForTimeout(600);
+    await p.mouse.click(prevCenter.x, prevCenter.y);
+    await p.waitForTimeout(400);
+    assert.equal(await at(), libraryIndexAgain + 1, "[이전] 연타가 두 칸이 아니라 쌓인 시트를 모두 닫았습니다(§9 E-051).");
+    assert.equal(await p.locator("#overlay-root .sheet").count(), 1, "[이전] 두 번 뒤에 첫 책 시트가 남아 있어야 합니다.");
+    await p.keyboard.press("Escape");
+    await settleClosed();
 
     // 계보 탭 — 겹친 시트에서 [계보 보기]로 나갔다가 뒤로 돌아와도 깊이를 안다(항목이 깊이를 싣는다)
     await p.locator('.tab[data-tab="lineage"]').click();
